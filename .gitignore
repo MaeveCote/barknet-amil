@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+venv/
+.venv/
+
+# Data — never commit raw images or datasets
+data/
+datasets/
+*.jpg
+*.jpeg
+*.png
+*.zip
+*.tar.gz
+
+# Model weights and checkpoints
+*.pt
+*.pth
+*.onnx
+checkpoints/
+runs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Optuna
+*.db
