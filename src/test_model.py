@@ -2,7 +2,7 @@
 
 Predictions are image-level (attention-pooled); the auxiliary per-patch head is not
 used at inference. Writes an Excel workbook with per-class results, a confusion matrix,
-and per-class accuracy.
+and per-class accuracy, plus a flat per-image predictions CSV.
 
 Usage:
     python test_model.py -c configs/config.yaml
@@ -21,7 +21,7 @@ import helper.data_loader as dt
 from helper.model_wrapper import ConvNeXtAMIL
 
 def main():
-    parser = argparse.ArgumentParser(description="BarkNet-AMIL evaluation")
+    parser = argparse.ArgumentParser(description="barknet-AMIL evaluation")
     parser.add_argument("-c", "--config", default="configs/config.yaml", type=str)
     args = parser.parse_args()
 
@@ -59,7 +59,7 @@ def main():
             image_id = image_id[0]
 
             image_logits, _ = model(patches)
-            probs = torch.softmax(image_logits, dim=1).cpu().numy()[0]
+            probs = torch.softmax(image_logits, dim=1).cpu().numpy()[0]
             pred = int(np.argmax(probs))
 
             entry = {
@@ -74,7 +74,11 @@ def main():
             results.append(entry)
             per_class[species[true_label]].append(entry)
 
-    excel_pat = results_dir / "classification_results.xlsx"
+    # Flat per-image predictions (one row per test image) for easy downstream analysis.
+    csv_path = results_dir / "classification_results.csv"
+    pd.DataFrame(results).to_csv(csv_path, index=False)
+
+    excel_path = results_dir / "classification_results.xlsx"
     with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
         for name in species:
             if per_class[name]:
@@ -82,7 +86,7 @@ def main():
                     writer, sheet_name=f"{name}"[:31], index=False
                 )
 
-        y_tru = [r["true_class"] for r in results]
+        y_true = [r["true_class"] for r in results]
         y_pred = [r["predicted_class"] for r in results]
         cm = confusion_matrix(y_true, y_pred, labels=species)
         pd.DataFrame(
@@ -100,6 +104,7 @@ def main():
 
     print(f"Overall accuracy: {overall:.4f}")
     print(f"Report saved to {excel_path}")
+    print(f"Per-image predictions saved to {csv_path}")
 
 if __name__ == "__main__":
     main()

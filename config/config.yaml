@@ -1,9 +1,6 @@
 # =============================================================================
-# BarkNet-AMIL — configuration
+# barknet-AMIL — configuration
 # ConvNeXt-V2 backbone + attention-based MIL over within-image bark patches.
-#
-# A bag = one image (its pre-cut patches). The train/val split is done at the
-# TREE level so no tree appears on both sides (leakage-safe evaluation).
 # =============================================================================
 
 project:
@@ -12,17 +9,18 @@ project:
   device: cuda:0              # cuda:0 | cpu
 
 data:
-  # Root of the PRE-CUT patch dataset. One sub-folder per species; the folder
-  # name is used directly as the class label.
-  patch_root: ./data/barknet_patches/train
-  num_workers: 8
-  val_ratio: 0.15            # fraction of TREES (not images) held out for validation
+  patch_root: G:\Source\BarkNet_ML\BarkNet_ML\data\barknet\patches_224\train # Root to the patches train data
+  num_workers: 5
+  val_ratio: 0.15  # fraction of trees (not images) held out for validation
+  max_patches_per_bag: 128
 
-  # The 23 BarkNet 1.0 species codes (folder names). Trim to the classes you
-  # actually train on; tiny classes (ERB, PEG, PID) are often dropped.
+  # The 23 barknet 1.0 species codes (folder names). Trim to the classes you
+  # actually train on; (ERB, PEG, PID) were dropped in the original barknet paper.
   species:
-    [BOJ, BOP, CHR, EPB, EPN, EPO, EPR, ERB, ERR, ERS, FRA, HEG,
-     MEL, ORA, OSV, PEG, PET, PIB, PID, PIR, PRU, SAB, THO]
+     [BOJ, BOP, CHR, EPB, EPN, EPO, EPR, ERR, ERS, FRA, HEG,
+      MEL, ORA, OSV, PET, PIB, PIR, PRU, SAB, THO]
+#    [BOJ, BOP, CHR, EPB, EPN, EPO, EPR, ERB, ERR, ERS, FRA, HEG,
+#     MEL, ORA, OSV, PEG, PET, PIB, PID, PIR, PRU, SAB, THO]
 
   # How to parse ids from a patch filename, e.g. "<tree>_<image>_<patch>.png".
   # tree_id_index drives the leakage-safe split; image_id_index defines the bag.
@@ -32,49 +30,61 @@ data:
     image_id_index: 1
 
 model:
-  size: pico                 # atto | femto | pico | tiny | small | base
-  weights: default           # default (ImageNet-pretrained) | none (from scratch)
+  size: pico # atto | femto | pico | nano | tiny | base
+  weights: default # default (ImageNet-pretrained) | none (from scratch)
   pretrained_checkpoint: null # optional .pth to resume a full AMIL model
   # Stage-1 backbone used to initialise Stage-2 (set null to skip two-stage training).
   backbone_checkpoint: ./runs/pretrain/best_backbone.pth
   attn_dropout: 0.1
   class_dropout: 0.4
   drop_path_rate: 0.2
-  label_smoothing: 0.1       # 0 disables
+  label_smoothing: 0.1 # 0 disables
 
-# Stage 1: patch-level backbone pretraining (plain per-patch classifier).
+# Stage 1: patch-level backbone pretraining (per-patch classifier).
 pretrain:
-  epochs: 30
-  batch_size: 256            # standard mini-batches of individual patches
-  warmup_ratio: 0.2          # fraction of epochs spent in linear warmup
+  optimal_params: ./runs/tune/optimal_params_convnext_amil_pretrain_default_pico.yaml
+  epochs: 50
+  batch_size: 128 # standard mini-batches of individual patches
+  warmup_ratio: 0.16 # fraction of epochs spent in linear warmup
   base_lr: 1.0e-3
   weight_decay: 0.05
-  early_stopping_patience: 5
-  resume: false              # continue from best_backbone.pth in output_dir
+  early_stopping_patience: 8
+  resume: false # resume from best_backbone.pth in output_dir
   output_dir: ./runs/pretrain
 
 # Stage 2: image-level AMIL fine-tuning (loads the Stage-1 backbone).
 train:
-  epochs: 50
-  warmup_ratio: 0.2          # fraction of epochs spent in linear warmup
-  accumulation_steps: 16     # effective batch size (in bags/images)
-  instance_loss_weight: 0.5  # lambda in  L = L_bag + lambda * L_instance
-  early_stopping_patience: 7
+  epochs: 25
+  warmup_ratio: 0.1 # fraction of epochs spent in linear warmup
+  accumulation_steps: 16 # effective batch size (in bags/images)
+  instance_loss_weight: 0.5 # lambda in  L = L_bag + lambda * L_instance
+  early_stopping_patience: 5
   output_dir: ./runs/train
-  optimal_params: null       # path to a hyperparameter_tuning.py output YAML to override the values below
-  optimizer:                 # leave null to use architecture-aware defaults
+  optimal_params: null # path to a hyperparameter_tuning.py output YAML to override the values below
+  optimizer: # leave null to use defaults
     base_lr: null
     weight_decay: null
     lr_multiplier: null
 
 tune:
-  trials: 20
-  epoch_limit: 12
-  train_subset_ratio: 0.15   # fraction of training images used per trial (speed)
+  stage: board # pretrain | board — which one runs when no --stage flag is given
   output_dir: ./runs/tune
 
+  pretrain:
+    trials: 15
+    epoch_limit: 8
+    train_subset_ratio: 0.15
+    val_subset_ratio: 0.15
+    min_val_images_per_class: 1
+    batch_size_choices: [128]
+
+  board:
+    trials: 15
+    epoch_limit: 4
+    train_subset_ratio: 0.15
+
 test:
-  checkpoint: ./runs/train/best_model.pth
+  checkpoint: G:\Source\BarkNet_ML\BarkNet_ML\runs\testing\barknetTestRun_pico_224\train\best_model.pth
   data_root: ./data/barknet_patches/test
   output_dir: ./runs/test
 
@@ -86,7 +96,7 @@ augmentation:
   vertical_flip: 0.5
   rotation:
     prob: 0.5
-    degrees: 30
+    degrees: 15
   color_jitter:
     prob: 0.5
     brightness: 0.3
@@ -96,12 +106,11 @@ augmentation:
   gaussian_blur:
     prob: 0.2
     kernel_size: 5
-  random_erasing:            # Cutout, sized as a fraction of patch area
+  random_erasing: # Cutout, sized as a fraction of patch area
     prob: 0.5
     scale: [0.02, 0.06]
     count: 2
   normalize:
-    # ImageNet stats by default (matches pretrained weights). Recompute on the
-    # BarkNet training set before final runs.
-    mean: [0.485, 0.456, 0.406]
-    std: [0.229, 0.224, 0.225]
+    # Statistics computed on the BarkNet 1.0 patches.
+    mean:  [0.4873, 0.4891, 0.4457]
+    std: [0.1988, 0.1965, 0.2132]

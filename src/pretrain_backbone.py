@@ -23,12 +23,35 @@ from helper.optimizer_scheduler import build_scheduler, build_uniform_optimizer
 from helper.timing import timer
 from helper.model_wrapper import ConvNeXtAMIL
 
+def load_optimal_params(path):
+    """Load a tuned-parameter file (yaml) emitted by hyperparameter_tuning.py."""
+    if not path:
+        return {}
+    with open(path, "r") as f:
+        payload = yaml.safe_load(f)
+    return payload.get("optimal_parameters", payload)
+
 def main(cfg, result_dir):
     device = cfg["project"]["device"]
     seed = cfg["project"].get("seed", 42)
     species = cfg["data"]["species"]
     model_cfg = cfg["model"]
     pre = cfg["pretrain"]
+
+    base_lr = pre["base_lr"]
+    weight_decay = pre["weight_decay"]
+    batch_size = pre["batch_size"]
+    class_dropout = model_cfg["class_dropout"]
+    drop_path_rate = model_cfg["drop_path_rate"]
+
+    tuned = load_optimal_params(pre.get("optimal_params"))
+    if tuned:
+        base_lr = tuned.get("base_lr", base_lr)
+        weight_decay = tuned.get("weight_decay", weight_decay)
+        batch_size = tuned.get("batch_size", batch_size)
+        class_dropout = tuned.get("class_dropout", class_dropout)
+        drop_path_rate = tuned.get("drop_path_rate", drop_path_rate)
+        print("Applied tuned hyperparameters from", pre["optimal_params"])
 
     # Resume from the best backbone in this output dir if requested.
     resume_ckpt = None
@@ -46,20 +69,20 @@ def main(cfg, result_dir):
         model_size=model_cfg["size"],
         weights=model_cfg["weights"],
         backbone_checkpoint=resume_ckpt,
-        class_dropout=model_cfg["class_dropout"],
-        drop_path_rate=model_cfg["drop_path_rate"],
+        class_dropout=class_dropout,
+        drop_path_rate=drop_path_rate,
         label_smoothing=model_cfg.get("label_smoothing", 0.0),
         save_data=True,
     )
     model, criterion = wrapper.get_patch_model()
 
-    optimizer = build_uniform_optimizer(model, pre["base_lr"], pre["weight_decay"])
+    optimizer = build_uniform_optimizer(model, base_lr, weight_decay)
     scheduler = build_scheduler(
-        optimizer, pre["epochs"], pre["warmup_ratio"], eta_min=pre["base_lr"] * 0.01
+        optimizer, pre["epochs"], pre["warmup_ratio"], eta_min=base_lr * 0.01
     )
 
     train_loader, val_loader = dt.build_patch_dataloaders(
-        cfg, batch_size=pre["batch_size"], seed=seed
+        cfg, batch_size=batch_size, seed=seed
     )
     scaler = torch.amp.GradScaler(device=wrapper.amp_device)
 
@@ -113,9 +136,8 @@ def main(cfg, result_dir):
 
     print(f"Stage-1 backbone saved to {result_dir / 'best_backbone.pth'}")
 
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="BarkNet-AMIL Stage-1 pretraining")
+    parser = argparse.ArgumentParser(description="barknet-AMIL Stage-1 pretraining")
     parser.add_argument("-c", "--config", default="configs/config.yaml", type=str)
     args = parser.parse_args()
 

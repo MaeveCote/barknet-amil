@@ -1,0 +1,25 @@
+# =============================================================================
+# batch_training.py sweep config
+# Each entry in `experiments` triggers the full training and testing of the config.
+# =============================================================================
+
+base_config: G:\Source\BarkNet_ML\BarkNet_ML\config\config.yaml # general parameters (data, augmentation, etc.)
+result_dir: ./runs/tuning
+prefix: initialTuning # experiment dirs: <prefix>_<size>_<patch_size>
+
+# {patch_size} is filled in per experiment.
+patch_root_template: "./data/barknet/patches_{patch_size}/train"
+test_data_root_template: "./data/barknet/patches_{patch_size}/test"
+
+stop_on_error: true
+
+steps:
+  tune_backbone: true   # Stage-1 Optuna search
+  train_backbone: true  # Stage-1 patch-classifier pretraining
+  tune_board: true      # Stage-2 Optuna search
+  train_board: true    # Stage-2 AMIL fine-tuning
+  test: true
+
+experiments:
+  - size: pico
+    patch_size: 224

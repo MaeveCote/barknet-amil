@@ -19,6 +19,7 @@ Tree/image ids are parsed from the filename via the ``data.filename`` config blo
 (delimiter + token indices), so the convention can change without touching code.
 """
 import random
+import zlib
 from collections import defaultdict
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -34,7 +35,10 @@ IMAGE_EXTENSIONS = {".png", ".bmp", ".jpg", ".jpeg", ".tif", ".tiff"}
 # A bag is a list of (patch_path, label) tuples for a single image.
 Bag = List[Tuple[Path, int]]
 
+
+# --------------------------------------------------------------------------- #
 # Transforms
+# --------------------------------------------------------------------------- #
 def build_train_transform(aug: Dict) -> Callable:
     """Per-patch training augmentation.
 
@@ -97,6 +101,7 @@ def build_train_transform(aug: Dict) -> Callable:
 
     return transforms.Compose(ops)
 
+
 def build_eval_transform(aug: Dict) -> Callable:
     """Deterministic transform for validation / test."""
     size = aug["input_size"]
@@ -108,7 +113,10 @@ def build_eval_transform(aug: Dict) -> Callable:
         ]
     )
 
+
+# --------------------------------------------------------------------------- #
 # Splitting
+# --------------------------------------------------------------------------- #
 def _parse_ids(filename: str, fcfg: Dict) -> Tuple[str, str]:
     """Extract (tree_id, image_id) tokens from a patch filename."""
     parts = Path(filename).stem.split(fcfg.get("delimiter", "_"))
@@ -116,12 +124,13 @@ def _parse_ids(filename: str, fcfg: Dict) -> Tuple[str, str]:
     image = parts[fcfg.get("image_id_index", 1)]
     return tree, image
 
+
 def split_by_tree(
-    patch_root: str,
-    species: List[str],
-    fcfg: Dict,
-    val_ratio: float,
-    seed: int = 42,
+        patch_root: str,
+        species: List[str],
+        fcfg: Dict,
+        val_ratio: float,
+        seed: int = 42,
 ) -> Tuple[List[Bag], List[Bag]]:
     """Scan ``patch_root`` and split into image-level bags with a tree-level holdout.
 
@@ -193,7 +202,39 @@ def _stratified_subset(bags: List[Bag], ratio: float, seed: int) -> List[Bag]:
     print(f"Subset: reduced to {len(subset)} stratified training images.")
     return subset
 
+
+def _cap_bags(bags: List[Bag], max_patches, seed: int) -> List[Bag]:
+    """Limit each bag to at most ``max_patches`` patches (Stage-2 memory control).
+
+    Bags at or under the cap are returned unchanged. Oversized bags are subsampled
+    deterministically -- the per-bag RNG is seeded from the bag's first filename, so a
+    given image always yields the SAME subset across epochs, runs, and the train/val
+    split. This keeps results reproducible and is safe for dense bark texture, where
+    every patch carries similar signal. Pass ``None`` / 0 / negative to disable.
+    """
+    if not max_patches or max_patches <= 0:
+        return bags
+
+    capped: List[Bag] = []
+    n_reduced = 0
+    for bag in bags:
+        if len(bag) <= max_patches:
+            capped.append(bag)
+            continue
+        key = Path(bag[0][0]).stem.encode()
+        rng = random.Random(seed ^ zlib.crc32(key))
+        capped.append(rng.sample(bag, max_patches))
+        n_reduced += 1
+
+    if n_reduced:
+        print(f"Bag cap: {n_reduced} bag(s) exceeded {max_patches} patches and were "
+              f"deterministically subsampled to {max_patches}.")
+    return capped
+
+
+# --------------------------------------------------------------------------- #
 # Dataset
+# --------------------------------------------------------------------------- #
 class PatchBagDataset(Dataset):
     """Returns one image's patches stacked as ``[N, C, H, W]`` plus its label.
 
@@ -201,11 +242,11 @@ class PatchBagDataset(Dataset):
     """
 
     def __init__(
-        self,
-        bags: List[Bag],
-        transform: Optional[Callable] = None,
-        return_id: bool = False,
-        fcfg: Optional[Dict] = None,
+            self,
+            bags: List[Bag],
+            transform: Optional[Callable] = None,
+            return_id: bool = False,
+            fcfg: Optional[Dict] = None,
     ):
         self.bags = bags
         self.transform = transform
@@ -236,7 +277,10 @@ class PatchBagDataset(Dataset):
             return patches, label, f"{tree}:{image}"
         return patches, label
 
+
+# --------------------------------------------------------------------------- #
 # Loaders
+# --------------------------------------------------------------------------- #
 def build_dataloaders(cfg: Dict, seed: int = 42, train_subset_ratio: float = 1.0):
     """Build train/val loaders. Batch size is fixed to 1 (one bag); the effective
     batch size is controlled by gradient accumulation in the training loop."""
@@ -251,6 +295,14 @@ def build_dataloaders(cfg: Dict, seed: int = 42, train_subset_ratio: float = 1.0
         seed=seed,
     )
     train_bags = _stratified_subset(train_bags, train_subset_ratio, seed)
+
+    # Stage-2 memory control: cap patches per bag so a single oversized image (e.g.
+    # a high-res photo yielding hundreds of patches) can't dictate peak VRAM. Set
+    # data.max_patches_per_bag to null/0 to disable. Applies to both the board-level
+    # hyperparameter search and training (both go through this function).
+    max_patches = data_cfg.get("max_patches_per_bag")
+    train_bags = _cap_bags(train_bags, max_patches, seed)
+    val_bags = _cap_bags(val_bags, max_patches, seed)
 
     num_workers = data_cfg.get("num_workers", 8)
     train_loader = DataLoader(
@@ -271,6 +323,7 @@ def build_dataloaders(cfg: Dict, seed: int = 42, train_subset_ratio: float = 1.0
     )
     return train_loader, val_loader
 
+
 def build_test_loader(cfg: Dict, data_root: str, seed: int = 42):
     """Build a single loader over an entire patch root (val_ratio=1.0), yielding ids."""
     data_cfg = cfg["data"]
@@ -288,7 +341,9 @@ def build_test_loader(cfg: Dict, data_root: str, seed: int = 42):
     return DataLoader(dataset, batch_size=1, shuffle=False, num_workers=data_cfg.get("num_workers", 4))
 
 
+# --------------------------------------------------------------------------- #
 # Stage-1 patch-level loaders (standard classification, no bags)
+# --------------------------------------------------------------------------- #
 class PatchDataset(Dataset):
     """Flat per-patch dataset for Stage-1 pretraining (one patch -> one label)."""
 
@@ -310,9 +365,11 @@ class PatchDataset(Dataset):
             pil = self.transform(pil)
         return pil, label
 
+
 def flatten_bags(bags: List[Bag]) -> List[Tuple[Path, int]]:
     """Flatten image-level bags into a flat list of (patch_path, label)."""
     return [pair for bag in bags for pair in bag]
+
 
 def build_patch_dataloaders(cfg: Dict, batch_size: int, seed: int = 42):
     """Stage-1 loaders: standard batched patch classification with a tree-level split.

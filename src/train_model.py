@@ -133,7 +133,7 @@ def main(cfg, result_dir):
                 break
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="BarkNet-AMIL training")
+    parser = argparse.ArgumentParser(description="barknet-AMIL training")
     parser.add_argument("-c", "--config", default="configs/config.yaml", type=str)
     args = parser.parse_args()
 
