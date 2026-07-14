@@ -13,7 +13,7 @@
 # ---------------------------------------------------------------- fail fast --
 : "${PATCH_SIZE:?set PATCH_SIZE (224|288|384)}"
 REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
-CONFIG="${CONFIG:-$REPO_DIR/configs/config_cluster.yaml}"
+CONFIG="${CONFIG:-$REPO_DIR/config/config_cluster.yaml}"
 PATCH_TAR="${PATCH_TAR:-$SCRATCH/data/barknet_patches_${PATCH_SIZE}.tar}"
 
 [ -d "$REPO_DIR" ] || { echo "REPO_DIR does not exist: $REPO_DIR"; exit 1; }
