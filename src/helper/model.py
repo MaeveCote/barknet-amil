@@ -61,9 +61,37 @@ class PatchAttentionMIL(nn.Module):
         return image_logits, patch_logits
 
     @torch.no_grad()
-    def attention_weights(self, x: torch.Tensor) -> torch.Tensor:
+    def _features_chunked(self, x: torch.Tensor, chunk_size: int) -> torch.Tensor:
+        """Embed a bag in chunks so peak activation memory is bounded by ``chunk_size``
+        instead of by the bag size. Only valid without gradients."""
+        if chunk_size is None or chunk_size <= 0 or x.size(0) <= chunk_size:
+            return self.extractor(x)
+        return torch.cat([self.extractor(x[i:i + chunk_size])
+                          for i in range(0, x.size(0), chunk_size)], dim=0)
+
+    @torch.no_grad()
+    def infer(self, x: torch.Tensor, chunk_size: int = 64):
+        """Memory-safe inference over a bag of ANY size.
+
+        Training caps bags (``data.max_patches_per_bag``) because backprop must hold every
+        patch's activations. At test time there are no gradients, so we can stream the bag
+        through the extractor in chunks and still attention-pool over all N patches --
+        i.e. the model sees the *whole* image at test time and an uncapped 336-patch
+        outlier cannot OOM the job after training already succeeded.
+
+        Returns ``(image_logits [1, C], patch_logits [N, C], attn [N, 1])``.
+        """
+        features = self._features_chunked(x, chunk_size)          # [N, F]
+        patch_logits = self.classifier(self.dropout(features))     # [N, C]
+        attn = F.softmax(self.attention(features), dim=0)          # [N, 1]
+        pooled = torch.sum(attn * features, dim=0, keepdim=True)   # [1, F]
+        image_logits = self.classifier(self.dropout(pooled))       # [1, C]
+        return image_logits, patch_logits, attn
+
+    @torch.no_grad()
+    def attention_weights(self, x: torch.Tensor, chunk_size: int = 64) -> torch.Tensor:
         """Return the per-patch softmax attention weights ``[N, 1]`` (for heatmaps)."""
-        features = self.extractor(x)
+        features = self._features_chunked(x, chunk_size)
         return F.softmax(self.attention(features), dim=0)
 
 
@@ -86,3 +114,19 @@ class PatchClassifier(nn.Module):
         # x is a standard mini-batch of patches [B, C, H, W].
         features = self.extractor(x)
         return self.classifier(self.dropout(features))
+
+    @torch.no_grad()
+    def infer(self, x: torch.Tensor, chunk_size: int = 64) -> torch.Tensor:
+        """Per-patch logits ``[N, C]`` for a whole bag, streamed in chunks.
+
+        This is what the majority-voting baseline runs on: Stage-1 classifies every patch
+        of an image independently and the image label is the hard vote over its patches --
+        exactly the aggregation rule that AMIL is being tested against.
+        """
+        if chunk_size is None or chunk_size <= 0 or x.size(0) <= chunk_size:
+            return self.classifier(self.dropout(self.extractor(x)))
+        return torch.cat(
+            [self.classifier(self.dropout(self.extractor(x[i:i + chunk_size])))
+             for i in range(0, x.size(0), chunk_size)],
+            dim=0,
+        )

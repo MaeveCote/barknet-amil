@@ -1,0 +1,145 @@
+# =============================================================================
+# barknet-AMIL — Rorqual / DRAC configuration
+#
+# Differences from configs/config.yaml:
+#   * patch_root points into $SLURM_TMPDIR (expanded at load time by helper.config_cli)
+#   * NO hyperparameter search on the cluster: the tuned values from the local Optuna
+#     run (Pico @ 224) are baked in directly, and optimal_params is null.
+#   * data.split carves train/val/test out of ONE patch root at run time -- the patches
+#     are all cut into a single train/ folder, there is no test/ folder on disk.
+#   * Stage-local dropouts: Stage 1 and Stage 2 were tuned separately and want
+#     different class_dropout, so each stage overrides model.class_dropout.
+# =============================================================================
+
+project:
+  name: barknet-amil
+  seed: 42
+  device: cuda:0
+
+data:
+  # ${SLURM_TMPDIR} is expanded when the config is loaded; --patch-root overrides it.
+  patch_root: ${SLURM_TMPDIR}/patches/train
+  num_workers: 8            # set from $SLURM_CPUS_PER_TASK by the job script
+  prefetch_factor: 4
+
+  # Tree-level, leakage-safe, computed at run time from the single patch root above.
+  #   holdout : test_ratio of the trees per class -> test
+  #   kfold   : set n_folds (e.g. 5) and rotate fold_index 0..4 for the CV runs;
+  #             when n_folds is set it overrides test_ratio.
+  split:
+    test_ratio: 0.2
+    n_folds: null
+    fold_index: 0
+  val_ratio: 0.15           # fraction of the NON-test trees held out for validation
+
+  # Cap used by the Stage-2 search AND by Stage-2 training -- keep them equal, or the
+  # hyperparameters were found on a different bag-size distribution than they are used on.
+  max_patches_per_bag: 128
+
+  species:
+     [BOJ, BOP, CHR, EPB, EPN, EPO, EPR, ERR, ERS, FRA, HEG,
+      MEL, ORA, OSV, PET, PIB, PIR, PRU, SAB, THO]
+
+  filename:
+    delimiter: "_"
+    tree_id_index: 0
+    image_id_index: 1
+
+model:
+  size: pico                # pico | nano | tiny | base   (there is no convnextv2_small)
+  weights: default          # default = ImageNet (FCMAE ft_in1k) | none = from scratch
+  pretrained_checkpoint: null
+  backbone_checkpoint: null # set by the job script after Stage 1 (--backbone-checkpoint)
+  # Optional: ImageNet weight file on disk, for compute nodes with no internet.
+  # Leave null to resolve through the pre-warmed HF cache (HF_HUB_OFFLINE=1).
+  pretrained_file: null
+  attn_dropout: 0.1         # fallback; Stage 2 overrides below
+  class_dropout: 0.4        # fallback; both stages override below
+  drop_path_rate: 0.25703944838962833   # from the Stage-1 search
+  label_smoothing: 0.1
+
+# ---- Stage 1: patch-level backbone pretraining ------------------------------
+# Tuned locally (Pico @ 224), best val loss 1.2340.
+pretrain:
+  optimal_params: null      # values are inlined below; no tuning on the cluster
+  epochs: 20
+  batch_size: 128
+  warmup_ratio: 0.16
+  base_lr: 1.0062785194709649e-4
+  weight_decay: 1.031294766456457e-3
+  class_dropout: 0.11410614649915582
+  drop_path_rate: 0.25703944838962833
+  early_stopping_patience: 5
+  # val_loss | val_acc -- these DISAGREE on this dataset (label-smoothing overconfidence
+  # pushes val loss up while val acc still climbs). Pick once, keep it for all folds.
+  checkpoint_metric: val_loss
+  resume: false
+  output_dir: ${SCRATCH}/runs/pretrain
+
+# ---- Stage 2: image-level AMIL fine-tuning ----------------------------------
+# Tuned locally (Pico @ 224), best val loss 0.8346. Trials were tightly clustered
+# (0.834-0.864), so treat these as a region rather than a point.
+train:
+  epochs: 15
+  warmup_ratio: 0.2
+  accumulation_steps: 32
+  instance_loss_weight: 0.6412880283086111
+  attn_dropout: 0.41876045365913256
+  class_dropout: 0.20525668127122992
+  early_stopping_patience: 5
+  save_epoch_states: false  # per-epoch full-model dumps: fine locally, wasteful on Lustre
+  optimal_params: null
+  optimizer:
+    base_lr: 1.0337768182267276e-5
+    weight_decay: 6.418189515676058e-4
+    lr_multiplier: 15
+  output_dir: ${SCRATCH}/runs/train
+
+tune:
+  stage: board
+  output_dir: ${SCRATCH}/runs/tune
+  pretrain:
+    trials: 3
+    epoch_limit: 5
+    train_subset_ratio: 0.02
+    val_subset_ratio: 0.06
+    min_val_images_per_class: 1
+    batch_size_choices: [16, 32, 64]
+  board:
+    trials: 3
+    epoch_limit: 3
+    train_subset_ratio: 0.01
+
+test:
+  checkpoint: null          # set by the job script (--checkpoint)
+  data_root: null           # null => use the runtime tree-level test split above
+  # Bags are streamed through the extractor in chunks at inference, so an uncapped
+  # 336-patch outlier cannot OOM the test pass. Lower this if VRAM is tight.
+  chunk_size: 64
+  max_patches_per_bag: null # null = evaluate on the FULL bag (the honest number)
+  output_dir: ${SCRATCH}/runs/test
+
+augmentation:
+  input_size: 224           # set per-run by the job script (--input-size)
+  horizontal_flip: 0.5
+  vertical_flip: 0.5
+  rotation:
+    prob: 0.5
+    degrees: 30
+  color_jitter:
+    prob: 0.5
+    brightness: 0.3
+    contrast: 0.3
+    saturation: 0.25
+    hue: 0.05
+  gaussian_blur:
+    prob: 0.2
+    kernel_size: 5
+  random_erasing:
+    prob: 0.5
+    scale: [0.02, 0.06]
+    count: 2
+  normalize:
+    # Computed on the BarkNet 1.0 patches.
+    mean: [0.4873, 0.4891, 0.4457]
+    std: [0.1988, 0.1965, 0.2132]

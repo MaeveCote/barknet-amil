@@ -11,9 +11,11 @@ LR is used.
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
+
 def warmup_epochs_from_ratio(num_epochs, warmup_ratio):
     """Convert a warmup fraction into an integer epoch count (>=1, <=num_epochs)."""
     return max(1, min(round(warmup_ratio * num_epochs), num_epochs))
+
 
 def build_scheduler(optimizer, num_epochs, warmup_ratio, eta_min):
     """Linear warmup for ``warmup_ratio`` of the run, then cosine decay for the rest."""
@@ -22,9 +24,11 @@ def build_scheduler(optimizer, num_epochs, warmup_ratio, eta_min):
     cosine = CosineAnnealingLR(optimizer, T_max=max(num_epochs - we, 1), eta_min=eta_min)
     return SequentialLR(optimizer, [warmup, cosine], milestones=[we])
 
+
 def build_uniform_optimizer(model, base_lr, weight_decay):
     """Plain AdamW over all parameters (used for Stage-1 patch pretraining)."""
     return optim.AdamW(model.parameters(), lr=base_lr, weight_decay=weight_decay)
+
 
 def build_optimizer_and_scheduler(
     model,

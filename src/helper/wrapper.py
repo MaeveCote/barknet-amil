@@ -21,36 +21,29 @@ from helper.model import PatchAttentionMIL, PatchClassifier
 
 
 class ConvNeXtAMIL:
-    # Verified against timm 1.0.24/1.0.28: the ConvNeXt-V2 family is
-    # atto/femto/pico/nano/tiny/base/large/huge. `convnextv2_small` exists as an
-    # architecture but has NO pretrained tag -- `convnextv2_small.fcmae_ft_in1k` does
-    # not exist. The size ladder for this project is pico -> nano -> tiny -> base.
     SIZE_TO_TIMM = {
         "atto": "convnextv2_atto.fcmae_ft_in1k",
         "femto": "convnextv2_femto.fcmae_ft_in1k",
         "pico": "convnextv2_pico.fcmae_ft_in1k",
-        "nano": "convnextv2_nano.fcmae_ft_in1k",
         "tiny": "convnextv2_tiny.fcmae_ft_in1k",
+        "small": "convnextv2_small.fcmae_ft_in1k",
         "base": "convnextv2_base.fcmae_ft_in1k",
-        "large": "convnextv2_large.fcmae_ft_in1k",
-        "huge": "convnextv2_huge.fcmae_ft_in1k",
     }
 
     def __init__(
-            self,
-            device,
-            species,
-            model_size="pico",
-            weights="default",
-            pretrained_checkpoint=None,
-            backbone_checkpoint=None,
-            attn_dropout=0.1,
-            class_dropout=0.4,
-            drop_path_rate=0.2,
-            label_smoothing=0.1,
-            instance_loss_weight=0.5,
-            save_data=True,
-            pretrained_file=None,
+        self,
+        device,
+        species,
+        model_size="pico",
+        weights="default",
+        pretrained_checkpoint=None,
+        backbone_checkpoint=None,
+        attn_dropout=0.1,
+        class_dropout=0.4,
+        drop_path_rate=0.2,
+        label_smoothing=0.1,
+        instance_loss_weight=0.5,
+        save_data=True,
     ):
         self.device = device
         self.species = species
@@ -64,10 +57,6 @@ class ConvNeXtAMIL:
         self.label_smoothing = label_smoothing
         self.instance_loss_weight = instance_loss_weight
         self.save_data = save_data
-        # Optional path to an ImageNet weight file on disk (.safetensors / .bin), for
-        # compute nodes with no internet. If unset, timm resolves through the HF cache
-        # (pre-warm it on the login node and export HF_HUB_OFFLINE=1).
-        self.pretrained_file = pretrained_file
 
         # device_type for autocast must be "cuda"/"cpu", never the full "cuda:0" string.
         self.amp_device = "cuda" if "cuda" in str(self.device) else "cpu"
@@ -79,32 +68,13 @@ class ConvNeXtAMIL:
         if self.model_size not in self.SIZE_TO_TIMM:
             valid = ", ".join(self.SIZE_TO_TIMM)
             raise ValueError(f"Invalid size '{self.model_size}'. Choose from: {valid}.")
-
-        tag = self.SIZE_TO_TIMM[self.model_size]
-        kwargs = dict(pretrained=use_imagenet, num_classes=0, drop_path_rate=self.drop_path_rate)
-
-        if use_imagenet and self.pretrained_file:
-            weight_path = Path(self.pretrained_file)
-            if not weight_path.exists():
-                raise FileNotFoundError(
-                    f"model.pretrained_file does not exist: {weight_path}. It must point at "
-                    f"the ImageNet weight file for '{tag}' (.safetensors or .bin)."
-                )
-            # timm's documented way to load ImageNet weights from disk instead of the hub.
-            kwargs["pretrained_cfg_overlay"] = dict(file=str(weight_path))
-            print(f"Loading ImageNet weights for {tag} from local file {weight_path}")
-
-        try:
-            return timm.create_model(tag, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- surface the offline case explicitly
-            if use_imagenet:
-                raise RuntimeError(
-                    f"Could not materialise pretrained weights for '{tag}'. On a compute node "
-                    f"there is no internet: pre-cache the weights on the login node "
-                    f"(HF_HOME=$HOME/.cache/huggingface) and export HF_HUB_OFFLINE=1 in the job, "
-                    f"or set model.pretrained_file to the weight file on disk. Original error: {exc}"
-                ) from exc
-            raise
+        # num_classes=0 strips timm's head and returns pooled embeddings per patch.
+        return timm.create_model(
+            self.SIZE_TO_TIMM[self.model_size],
+            pretrained=use_imagenet,
+            num_classes=0,
+            drop_path_rate=self.drop_path_rate,
+        )
 
     def _criterion(self):
         if self.label_smoothing:
@@ -137,9 +107,9 @@ class ConvNeXtAMIL:
     def get_model(self):
         """Stage-2 AMIL model, optionally initialised from a Stage-1 backbone."""
         use_imagenet = (
-                self.weights == "default"
-                and self.backbone_checkpoint is None
-                and self.pretrained_checkpoint is None
+            self.weights == "default"
+            and self.backbone_checkpoint is None
+            and self.pretrained_checkpoint is None
         )
         extractor = self._build_extractor(use_imagenet)
         in_features = extractor.num_features
@@ -186,17 +156,13 @@ class ConvNeXtAMIL:
     # ------------------------------------------------------------------ #
     # Stage 1 — patch-level loops (standard mini-batches)
     # ------------------------------------------------------------------ #
-    def train_patch_epoch(self, model, criterion, optimizer, scaler, loader, epoch, total=None):
-        """``total`` lets the caller pass an explicit batch count when ``loader`` is
-        something like an itertools.islice wrapper that has no __len__ of its own
-        (e.g. the hyperparameter search capping batches-per-epoch) -- without it,
-        tqdm can't show a percentage or ETA and falls back to a bare iteration count."""
+    def train_patch_epoch(self, model, criterion, optimizer, scaler, loader, epoch):
         model.train()
         running_loss = 0.0
         correct = 0
-        total_seen = 0
+        total = 0
 
-        for images, labels in tqdm(loader, desc=f"[Stage 1] Epoch {epoch} Training", total=total):
+        for images, labels in tqdm(loader, desc=f"[Stage 1] Epoch {epoch} Training"):
             images = images.to(self.device)
             labels = labels.to(self.device)
 
@@ -210,21 +176,21 @@ class ConvNeXtAMIL:
 
             running_loss += loss.item() * images.size(0)
             _, predicted = logits.max(1)
-            total_seen += labels.size(0)
+            total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
 
-        epoch_loss = running_loss / max(total_seen, 1)
-        epoch_acc = 100.0 * correct / max(total_seen, 1)
+        epoch_loss = running_loss / max(total, 1)
+        epoch_acc = 100.0 * correct / max(total, 1)
         return epoch_loss, epoch_acc
 
-    def validate_patch_epoch(self, model, criterion, loader, total=None):
+    def validate_patch_epoch(self, model, criterion, loader):
         model.eval()
         running_loss = 0.0
         correct = 0
-        total_seen = 0
+        total = 0
 
         with torch.no_grad():
-            for images, labels in tqdm(loader, desc="[Stage 1] Validating", leave=False, total=total):
+            for images, labels in tqdm(loader, desc="[Stage 1] Validating", leave=False):
                 images = images.to(self.device)
                 labels = labels.to(self.device)
 
@@ -234,10 +200,10 @@ class ConvNeXtAMIL:
 
                 running_loss += loss.item() * images.size(0)
                 _, predicted = logits.max(1)
-                total_seen += labels.size(0)
+                total += labels.size(0)
                 correct += predicted.eq(labels).sum().item()
 
-        return running_loss / max(total_seen, 1), 100.0 * correct / max(total_seen, 1)
+        return running_loss / max(total, 1), 100.0 * correct / max(total, 1)
 
     # ------------------------------------------------------------------ #
     # Stage 2 — image-level AMIL loops (one bag at a time, accumulated)
@@ -250,8 +216,8 @@ class ConvNeXtAMIL:
         return loss_bag + self.instance_loss_weight * loss_instance
 
     def train_epoch(
-            self, model, criterion, optimizer, scaler, train_loader, epoch,
-            result_dir=None, accumulation_steps=16,
+        self, model, criterion, optimizer, scaler, train_loader, epoch,
+        result_dir=None, accumulation_steps=16,
     ):
         """One epoch of image-level AMIL training with gradient accumulation."""
         model.train()
@@ -261,7 +227,7 @@ class ConvNeXtAMIL:
         optimizer.zero_grad()
 
         for i, (patches, label) in enumerate(
-                tqdm(train_loader, desc=f"[Stage 2] Epoch {epoch} Training")
+            tqdm(train_loader, desc=f"[Stage 2] Epoch {epoch} Training")
         ):
             # Drop the dummy batch dim so the model sees a single bag [N, C, H, W].
             patches = patches.squeeze(0).to(self.device)

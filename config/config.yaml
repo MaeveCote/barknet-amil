@@ -9,10 +9,21 @@ project:
   device: cuda:0              # cuda:0 | cpu
 
 data:
-  patch_root: G:\Source\BarkNet_ML\BarkNet_ML\data\barknet\patches_224\train # Root to the patches train data
+  patch_root: ./data/barknet_patches/train # Root to the patches train data
   num_workers: 5
-  val_ratio: 0.15  # fraction of trees (not images) held out for validation
-  max_patches_per_bag: 128
+  prefetch_factor: 4
+
+  # Runtime tree-level split out of the single patch_root above (no test/ folder needed).
+  #   test_ratio: 0    -> legacy behaviour: train/val only, test comes from test.data_root
+  #   test_ratio: 0.2  -> 20% of the trees per class are held out as test
+  #   n_folds: 5       -> k-fold CV; fold_index selects which fold is the test set
+  #                       (overrides test_ratio when set)
+  split:
+    test_ratio: 0.0
+    n_folds: null
+    fold_index: 0
+  val_ratio: 0.15  # fraction of the NON-test trees held out for validation
+  max_patches_per_bag: 128  # keep equal to the value the Stage-2 search used
 
   # The 23 barknet 1.0 species codes (folder names). Trim to the classes you
   # actually train on; (ERB, PEG, PID) were dropped in the original barknet paper.
@@ -30,7 +41,7 @@ data:
     image_id_index: 1
 
 model:
-  size: pico # atto | femto | pico | nano | tiny | base
+  size: pico # atto | femto | pico | nano | tiny | base  (there is no convnextv2_small)
   weights: default # default (ImageNet-pretrained) | none (from scratch)
   pretrained_checkpoint: null # optional .pth to resume a full AMIL model
   # Stage-1 backbone used to initialise Stage-2 (set null to skip two-stage training).
@@ -43,22 +54,26 @@ model:
 # Stage 1: patch-level backbone pretraining (per-patch classifier).
 pretrain:
   optimal_params: ./runs/tune/optimal_params_convnext_amil_pretrain_default_pico.yaml
-  epochs: 50
-  batch_size: 128 # standard mini-batches of individual patches
+  epochs: 2
+  batch_size: 64 # standard mini-batches of individual patches
   warmup_ratio: 0.16 # fraction of epochs spent in linear warmup
   base_lr: 1.0e-3
   weight_decay: 0.05
-  early_stopping_patience: 8
+  early_stopping_patience: 10
+  # val_loss | val_acc -- they disagree on this dataset (label smoothing pushes val loss
+  # up while val acc still climbs). Pick one and use it for every fold.
+  checkpoint_metric: val_loss
   resume: false # resume from best_backbone.pth in output_dir
   output_dir: ./runs/pretrain
 
 # Stage 2: image-level AMIL fine-tuning (loads the Stage-1 backbone).
 train:
-  epochs: 25
-  warmup_ratio: 0.1 # fraction of epochs spent in linear warmup
+  epochs: 2
+  warmup_ratio: 0.2 # fraction of epochs spent in linear warmup
   accumulation_steps: 16 # effective batch size (in bags/images)
   instance_loss_weight: 0.5 # lambda in  L = L_bag + lambda * L_instance
-  early_stopping_patience: 5
+  early_stopping_patience: 10
+  save_epoch_states: false # dump a full state_<epoch>.pth every epoch
   output_dir: ./runs/train
   optimal_params: null # path to a hyperparameter_tuning.py output YAML to override the values below
   optimizer: # leave null to use defaults
@@ -71,21 +86,24 @@ tune:
   output_dir: ./runs/tune
 
   pretrain:
-    trials: 15
-    epoch_limit: 8
-    train_subset_ratio: 0.15
-    val_subset_ratio: 0.15
+    trials: 3
+    epoch_limit: 5
+    train_subset_ratio: 0.02
+    val_subset_ratio: 0.06
     min_val_images_per_class: 1
-    batch_size_choices: [128]
+    batch_size_choices: [16, 32, 64]
 
   board:
-    trials: 15
-    epoch_limit: 4
-    train_subset_ratio: 0.15
+    trials: 3
+    epoch_limit: 3
+    train_subset_ratio: 0.01
 
 test:
-  checkpoint: G:\Source\BarkNet_ML\BarkNet_ML\runs\testing\barknetTestRun_pico_224\train\best_model.pth
+  checkpoint: ./runs/train/best_model.pth
+  # Legacy pre-cut test folder. Set to null to use the runtime data.split holdout instead.
   data_root: ./data/barknet_patches/test
+  chunk_size: 64            # patches per forward chunk at inference (bounds peak VRAM)
+  max_patches_per_bag: null # null = evaluate on the FULL bag
   output_dir: ./runs/test
 
 augmentation:
