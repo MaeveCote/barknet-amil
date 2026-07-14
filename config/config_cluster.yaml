@@ -72,7 +72,7 @@ pretrain:
   early_stopping_patience: 5
   # val_loss | val_acc -- these DISAGREE on this dataset (label-smoothing overconfidence
   # pushes val loss up while val acc still climbs). Pick once, keep it for all folds.
-  checkpoint_metric: val_loss
+  checkpoint_metric: val_acc
   resume: false
   output_dir: ${SCRATCH}/runs/pretrain
 
@@ -125,7 +125,7 @@ augmentation:
   vertical_flip: 0.5
   rotation:
     prob: 0.5
-    degrees: 30
+    degrees: 15
   color_jitter:
     prob: 0.5
     brightness: 0.3
