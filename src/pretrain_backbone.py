@@ -29,7 +29,7 @@ from helper.config_cli import add_config_args, dump_config, load_config
 from helper.early_stopping import EarlyStopping
 from helper.optimizer_scheduler import build_scheduler, build_uniform_optimizer
 from helper.timing import timer
-from helper.model_wrapper import ConvNeXtAMIL
+from helper.model_wrapper import ConvNeXtAMIL, unwrap
 
 CHECKPOINT_METRICS = {"val_loss", "val_acc"}
 
@@ -54,6 +54,7 @@ def pick(*values, default=None):
 def main(cfg, result_dir):
     device = cfg["project"]["device"]
     seed = cfg["project"].get("seed", 42)
+    perf_cfg = cfg["project"].get("perf", {}) or {}
     species = cfg["data"]["species"]
     model_cfg = cfg["model"]
     pre = cfg["pretrain"]
@@ -99,6 +100,11 @@ def main(cfg, result_dir):
         drop_path_rate=drop_path_rate,
         label_smoothing=model_cfg.get("label_smoothing", 0.0),
         pretrained_file=model_cfg.get("pretrained_file"),
+        # --- performance (see project.perf in the config) --------------------
+        amp_dtype=perf_cfg.get("amp_dtype", "bf16"),
+        channels_last=perf_cfg.get("channels_last", True),
+        # Stage 1 has a fixed batch shape, so torch.compile can actually cache a graph.
+        compile_model=perf_cfg.get("compile_stage1", False),
         save_data=True,
     )
     model, criterion = wrapper.get_patch_model()
@@ -109,7 +115,7 @@ def main(cfg, result_dir):
     )
 
     train_loader, val_loader = dt.build_patch_dataloaders(cfg, batch_size=batch_size, seed=seed)
-    scaler = torch.amp.GradScaler(device=wrapper.amp_device)
+    scaler = wrapper.make_scaler()   # disabled automatically when amp_dtype=bf16
 
     csv_path = result_dir / "pretrain_results.csv"
     fieldnames = ["epoch", "train_loss", "train_acc", "val_loss", "val_acc", "learning_rate"]
@@ -144,12 +150,12 @@ def main(cfg, result_dir):
                 else (val_acc > best["val_acc"])
             if improved:
                 best = {"val_loss": val_loss, "val_acc": val_acc, "epoch": epoch}
-                torch.save(model.state_dict(), result_dir / "best_backbone.pth")
+                torch.save(unwrap(model).state_dict(), result_dir / "best_backbone.pth")
                 print(f"New best backbone ({metric}): val_loss={val_loss:.4f} val_acc={val_acc:.2f}%")
 
             # Always keep the last epoch too: it is the fallback if the criterion above
             # turns out to be the wrong one, and it costs one file.
-            torch.save(model.state_dict(), result_dir / "last_backbone.pth")
+            torch.save(unwrap(model).state_dict(), result_dir / "last_backbone.pth")
 
             row = {
                 "epoch": epoch,

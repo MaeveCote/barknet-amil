@@ -13,7 +13,7 @@
 # ---------------------------------------------------------------- fail fast --
 : "${PATCH_SIZE:?set PATCH_SIZE (224|288|384)}"
 REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
-CONFIG="${CONFIG:-$REPO_DIR/config/config_cluster.yaml}"
+CONFIG="${CONFIG:-$REPO_DIR/configs/config_cluster.yaml}"
 PATCH_TAR="${PATCH_TAR:-$SCRATCH/data/barknet_patches_${PATCH_SIZE}.tar}"
 
 [ -d "$REPO_DIR" ] || { echo "REPO_DIR does not exist: $REPO_DIR"; exit 1; }
@@ -33,7 +33,7 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
 # OpenCV comes from the MODULE, not from pip: the `opencv_python` wheel in the
 # Alliance wheelhouse is a placeholder stub that installs nothing usable.
 module load python/3.11 opencv/4.13.0
-module list 2>&1 | head -20
+module list 2>&1 || true
 
 # Compute nodes have NO internet. timm must resolve ImageNet weights from the cache
 # that 00_prefetch_weights.sh warmed on the login node.

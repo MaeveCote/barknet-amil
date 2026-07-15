@@ -20,6 +20,18 @@ from tqdm import tqdm
 from helper.model import PatchAttentionMIL, PatchClassifier
 
 
+def unwrap(model):
+    """Return the real module behind a ``torch.compile`` wrapper.
+
+    torch.compile returns an OptimizedModule whose ``state_dict()`` keys are all prefixed
+    with ``_orig_mod.``. Saving that checkpoint would be quietly catastrophic here: Stage 2
+    transfers the backbone with ``strict=False``, so every key would be "unexpected", ZERO
+    tensors would transfer, and the run would train from ImageNet init while printing a
+    cheerful success message. Always save ``unwrap(model).state_dict()``.
+    """
+    return getattr(model, "_orig_mod", model)
+
+
 class ConvNeXtAMIL:
     # Verified against timm 1.0.24/1.0.28: the ConvNeXt-V2 family is
     # atto/femto/pico/nano/tiny/base/large/huge. `convnextv2_small` exists as an
@@ -51,6 +63,9 @@ class ConvNeXtAMIL:
             instance_loss_weight=0.5,
             save_data=True,
             pretrained_file=None,
+            amp_dtype="bf16",
+            channels_last=True,
+            compile_model=False,
     ):
         self.device = device
         self.species = species
@@ -71,6 +86,48 @@ class ConvNeXtAMIL:
 
         # device_type for autocast must be "cuda"/"cpu", never the full "cuda:0" string.
         self.amp_device = "cuda" if "cuda" in str(self.device) else "cpu"
+
+        # --- performance -------------------------------------------------------------
+        # bf16 on an H100: same speed as fp16, wider exponent range, and NO GradScaler
+        # needed (fp16's scaler exists to stop small gradients underflowing; bf16 has
+        # fp32's exponent so they don't). fp16 stays available for older cards.
+        self.amp_dtype_name = str(amp_dtype).lower()
+        if self.amp_dtype_name in ("bf16", "bfloat16"):
+            self.amp_dtype = torch.bfloat16
+        elif self.amp_dtype_name in ("fp16", "float16", "half"):
+            self.amp_dtype = torch.float16
+        else:
+            raise ValueError(f"amp_dtype must be bf16 or fp16, got '{amp_dtype}'.")
+        # bf16 on CPU is fine; fp16 on CPU is not well supported -- fall back.
+        if self.amp_device == "cpu" and self.amp_dtype is torch.float16:
+            self.amp_dtype = torch.bfloat16
+
+        # GradScaler is only meaningful for fp16. Constructing it disabled for bf16 keeps
+        # the call sites identical (scaler.scale/step/update become pass-throughs).
+        self.needs_scaler = self.amp_dtype is torch.float16
+
+        # ConvNets hit the tensor cores through NHWC. PyTorch's default NCHW forces a
+        # transpose on every conv; channels_last removes it.
+        self.channels_last = bool(channels_last) and self.amp_device == "cuda"
+        self.memory_format = torch.channels_last if self.channels_last else torch.contiguous_format
+        self.compile_model = bool(compile_model)
+
+    def make_scaler(self):
+        """The scaler the training scripts should use, matched to amp_dtype."""
+        return torch.amp.GradScaler(device=self.amp_device, enabled=self.needs_scaler)
+
+    def _finalise(self, model):
+        """Common post-construction steps: device, memory format, optional compile."""
+        model.to(self.device)
+        if self.channels_last:
+            model.to(memory_format=torch.channels_last)
+        if self.compile_model:
+            # Stage 2 feeds ragged bag shapes [N, C, H, W] with N varying per image, which
+            # makes torch.compile recompile constantly. Only Stage 1 (fixed batch shape)
+            # should set this.
+            print("torch.compile enabled (first batch will be slow while it warms up).")
+            model = torch.compile(model)
+        return model
 
     # ------------------------------------------------------------------ #
     # Construction
@@ -131,7 +188,7 @@ class ConvNeXtAMIL:
             model.load_state_dict(state)
             print(f"Resumed Stage-1 backbone from {self.backbone_checkpoint}")
 
-        model.to(self.device)
+        model = self._finalise(model)
         return model, self._criterion()
 
     def get_model(self):
@@ -176,7 +233,7 @@ class ConvNeXtAMIL:
             model.load_state_dict(state)
             print(f"Resumed full AMIL model from {self.pretrained_checkpoint}")
 
-        model.to(self.device)
+        model = self._finalise(model)
         return model, self._criterion()
 
     def get_last_conv_layer(self, model):
@@ -197,11 +254,11 @@ class ConvNeXtAMIL:
         total_seen = 0
 
         for images, labels in tqdm(loader, desc=f"[Stage 1] Epoch {epoch} Training", total=total):
-            images = images.to(self.device)
+            images = images.to(self.device, memory_format=self.memory_format)
             labels = labels.to(self.device)
 
             optimizer.zero_grad()
-            with torch.autocast(device_type=self.amp_device, dtype=torch.float16):
+            with torch.autocast(device_type=self.amp_device, dtype=self.amp_dtype):
                 logits = model(images)
                 loss = criterion(logits, labels)
             scaler.scale(loss).backward()
@@ -225,10 +282,10 @@ class ConvNeXtAMIL:
 
         with torch.no_grad():
             for images, labels in tqdm(loader, desc="[Stage 1] Validating", leave=False, total=total):
-                images = images.to(self.device)
+                images = images.to(self.device, memory_format=self.memory_format)
                 labels = labels.to(self.device)
 
-                with torch.autocast(device_type=self.amp_device, dtype=torch.float16):
+                with torch.autocast(device_type=self.amp_device, dtype=self.amp_dtype):
                     logits = model(images)
                     loss = criterion(logits, labels)
 
@@ -264,10 +321,10 @@ class ConvNeXtAMIL:
                 tqdm(train_loader, desc=f"[Stage 2] Epoch {epoch} Training")
         ):
             # Drop the dummy batch dim so the model sees a single bag [N, C, H, W].
-            patches = patches.squeeze(0).to(self.device)
+            patches = patches.squeeze(0).to(self.device, memory_format=self.memory_format)
             label = label.to(self.device)
 
-            with torch.autocast(device_type=self.amp_device, dtype=torch.float16):
+            with torch.autocast(device_type=self.amp_device, dtype=self.amp_dtype):
                 image_logits, patch_logits = model(patches)
                 loss = self._combined_loss(image_logits, patch_logits, label, criterion)
                 loss = loss / accumulation_steps
@@ -289,7 +346,7 @@ class ConvNeXtAMIL:
 
         if self.save_data and result_dir:
             Path(result_dir).mkdir(parents=True, exist_ok=True)
-            torch.save(model.state_dict(), Path(result_dir) / f"state_{epoch}.pth")
+            torch.save(unwrap(model).state_dict(), Path(result_dir) / f"state_{epoch}.pth")
 
         return epoch_loss, epoch_acc
 
@@ -302,10 +359,10 @@ class ConvNeXtAMIL:
 
         with torch.no_grad():
             for patches, label in tqdm(val_loader, desc="[Stage 2] Validating", leave=False):
-                patches = patches.squeeze(0).to(self.device)
+                patches = patches.squeeze(0).to(self.device, memory_format=self.memory_format)
                 label = label.to(self.device)
 
-                with torch.autocast(device_type=self.amp_device, dtype=torch.float16):
+                with torch.autocast(device_type=self.amp_device, dtype=self.amp_dtype):
                     image_logits, _ = model(patches)
                     loss = criterion(image_logits, label)
 

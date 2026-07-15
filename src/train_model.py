@@ -23,7 +23,7 @@ from helper.config_cli import add_config_args, dump_config, load_config
 from helper.early_stopping import EarlyStopping
 from helper.optimizer_scheduler import build_optimizer_and_scheduler
 from helper.timing import timer
-from helper.model_wrapper import ConvNeXtAMIL
+from helper.model_wrapper import ConvNeXtAMIL, unwrap
 
 
 def load_optimal_params(path):
@@ -46,6 +46,7 @@ def pick(*values, default=None):
 def main(cfg, result_dir):
     device = cfg["project"]["device"]
     seed = cfg["project"].get("seed", 42)
+    perf_cfg = cfg["project"].get("perf", {}) or {}
     species = cfg["data"]["species"]
 
     model_cfg = cfg["model"]
@@ -88,6 +89,12 @@ def main(cfg, result_dir):
         label_smoothing=model_cfg.get("label_smoothing", 0.0),
         instance_loss_weight=instance_loss_weight,
         pretrained_file=model_cfg.get("pretrained_file"),
+        # --- performance (see project.perf in the config) --------------------
+        amp_dtype=perf_cfg.get("amp_dtype", "bf16"),
+        channels_last=perf_cfg.get("channels_last", True),
+        # NOT compiled: Stage-2 bags are [N, C, H, W] with N varying per image, so
+        # torch.compile would recompile on nearly every batch and run SLOWER.
+        compile_model=False,
         # Per-epoch full-model dumps are useful locally, wasteful on a cluster filesystem.
         save_data=bool(train_cfg.get("save_epoch_states", False)),
     )
@@ -104,7 +111,7 @@ def main(cfg, result_dir):
     )
 
     train_loader, val_loader = dt.build_dataloaders(cfg, seed=seed)
-    scaler = torch.amp.GradScaler(device=wrapper.amp_device)
+    scaler = wrapper.make_scaler()   # disabled automatically when amp_dtype=bf16
 
     csv_path = result_dir / f"convnextv2_{model_cfg['size']}_results.csv"
     fieldnames = ["epoch", "train_loss", "train_acc", "val_loss", "val_acc", "learning_rate"]
@@ -121,6 +128,12 @@ def main(cfg, result_dir):
         early_stopper = EarlyStopping(patience=train_cfg["early_stopping_patience"])
 
         for epoch in range(train_cfg["epochs"]):
+            # Redraw the stochastic per-bag subset. Must happen BEFORE the loader is
+            # iterated, since that is when the (non-persistent) workers fork and inherit
+            # the dataset's epoch.
+            if hasattr(train_loader.dataset, "set_epoch"):
+                train_loader.dataset.set_epoch(epoch)
+
             train_loss, train_acc = wrapper.train_epoch(
                 model, criterion, optimizer, scaler, train_loader, epoch,
                 result_dir=result_dir, accumulation_steps=accumulation_steps,
@@ -137,9 +150,9 @@ def main(cfg, result_dir):
 
             if val_acc > best["val_acc"]:
                 best = {"val_acc": val_acc, "val_loss": val_loss, "epoch": epoch}
-                torch.save(model.state_dict(), result_dir / "best_model.pth")
+                torch.save(unwrap(model).state_dict(), result_dir / "best_model.pth")
                 print(f"New best model saved: {val_acc:.2f}% image-level val accuracy")
-            torch.save(model.state_dict(), result_dir / "last_model.pth")
+            torch.save(unwrap(model).state_dict(), result_dir / "last_model.pth")
 
             row = {
                 "epoch": epoch,

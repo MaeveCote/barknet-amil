@@ -16,6 +16,17 @@ project:
   seed: 42
   device: cuda:0
 
+  # --- performance ------------------------------------------------------------
+  # Measured on an H100 (nano @ 224): GPU utilisation is 93-98%, so the job is
+  # COMPUTE-bound, not input-bound. More CPUs buy nothing; these three knobs do.
+  perf:
+    amp_dtype: bf16        # bf16 on H100 = fp16 speed, wider exponent, NO GradScaler.
+                           #   Set fp16 on older cards (RTX 3090) if bf16 underperforms.
+    channels_last: true    # NHWC: convnets reach the tensor cores without a transpose.
+    compile_stage1: true   # torch.compile Stage 1 ONLY -- it has a fixed batch shape.
+                           #   Stage 2's bags are [N,C,H,W] with N varying per image, so
+                           #   compiling it would recompile on nearly every batch.
+
 data:
   # ${SLURM_TMPDIR} is expanded when the config is loaded; --patch-root overrides it.
   patch_root: ${SLURM_TMPDIR}/patches/train
@@ -125,7 +136,7 @@ augmentation:
   vertical_flip: 0.5
   rotation:
     prob: 0.5
-    degrees: 15
+    degrees: 30
   color_jitter:
     prob: 0.5
     brightness: 0.3

@@ -357,29 +357,55 @@ def _stratified_subset(bags: List[Bag], ratio: float, seed: int) -> List[Bag]:
     return subset
 
 
-def _cap_bags(bags: List[Bag], max_patches, seed: int) -> List[Bag]:
-    """Limit each bag to at most ``max_patches`` patches (Stage-2 memory control).
+def _select_patches(bag: Bag, max_patches, seed: int, epoch: int = 0,
+                    stochastic: bool = False) -> Bag:
+    """Subsample one bag down to ``max_patches``, or return it unchanged.
 
-    Bags at or under the cap are returned unchanged. Oversized bags are subsampled
-    deterministically -- the per-bag RNG is seeded from the bag's first filename, so a
-    given image always yields the SAME subset across epochs, runs, and splits. This keeps
-    results reproducible and is safe for dense bark texture, where every patch carries
-    similar signal. Pass ``None`` / 0 / negative to disable.
+    Two modes:
+
+    * **deterministic** (``stochastic=False``) -- the RNG is seeded from the bag's first
+      filename alone, so the image always yields the SAME subset. Use for val/test, where
+      a bag that changes between epochs would make the val curve noisy and early stopping
+      jumpy.
+    * **stochastic** (``stochastic=True``) -- the epoch is mixed into the seed, so every
+      epoch sees a DIFFERENT subset of the same image. Over a long run the model sees all
+      of the image's patches, and the cap becomes free augmentation instead of throwing
+      ~40% of the training patches away permanently. Use for Stage-2 training.
+
+    Still reproducible either way: same (seed, filename, epoch) -> same subset.
+    """
+    if not max_patches or max_patches <= 0 or len(bag) <= max_patches:
+        return bag
+    key = zlib.crc32(Path(bag[0][0]).stem.encode())
+    salt = (epoch * 0x9E3779B1) if stochastic else 0
+    rng = random.Random((seed ^ key ^ salt) & 0xFFFFFFFF)
+    return rng.sample(bag, max_patches)
+
+
+def cap_report(bags: List[Bag], max_patches, label: str = "") -> None:
+    """Print how many bags the cap actually bites on. Worth logging per split: the
+    cap-hit rate is patch-size dependent (a 224 cut yields ~3x more patches per image
+    than a 384 cut), so an ablation across patch sizes is also, silently, an ablation
+    across how much of each bag the model ever sees."""
+    if not max_patches or max_patches <= 0:
+        print(f"Bag cap{label}: disabled (full bags).")
+        return
+    n_over = sum(1 for b in bags if len(b) > max_patches)
+    pct = 100.0 * n_over / max(len(bags), 1)
+    print(f"Bag cap{label}: {max_patches} patches | {n_over}/{len(bags)} bags "
+          f"({pct:.1f}%) exceed it and get subsampled.")
+
+
+def _cap_bags(bags: List[Bag], max_patches, seed: int) -> List[Bag]:
+    """Split-time deterministic cap (test loader, and the legacy Stage-2 path).
+
+    Stage-2 *training* no longer uses this -- it caps inside the dataset so the subset can
+    be resampled every epoch. Kept for the deterministic paths and for hyperparameter_tuning.
     """
     if not max_patches or max_patches <= 0:
         return bags
-
-    capped: List[Bag] = []
-    n_reduced = 0
-    for bag in bags:
-        if len(bag) <= max_patches:
-            capped.append(bag)
-            continue
-        key = Path(bag[0][0]).stem.encode()
-        rng = random.Random(seed ^ zlib.crc32(key))
-        capped.append(rng.sample(bag, max_patches))
-        n_reduced += 1
-
+    capped = [_select_patches(b, max_patches, seed) for b in bags]
+    n_reduced = sum(1 for b in bags if len(b) > max_patches)
     if n_reduced:
         print(f"Bag cap: {n_reduced} bag(s) exceeded {max_patches} patches and were "
               f"deterministically subsampled to {max_patches}.")
@@ -415,17 +441,38 @@ class PatchBagDataset(Dataset):
             transform: Optional[Callable] = None,
             return_id: bool = False,
             fcfg: Optional[Dict] = None,
+            max_patches: Optional[int] = None,
+            stochastic_cap: bool = False,
+            seed: int = 42,
     ):
         self.bags = bags
         self.transform = transform
         self.return_id = return_id
         self.fcfg = fcfg or {}
+        # Capping happens HERE rather than at split time so that a stochastic cap can draw
+        # a fresh subset every epoch. The full bag is always retained in self.bags.
+        self.max_patches = max_patches
+        self.stochastic_cap = stochastic_cap
+        self.seed = seed
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        """Advance the epoch so a stochastic cap draws a new subset.
+
+        NOTE: with ``persistent_workers=True`` the worker processes hold their own copy of
+        this dataset and would never see the update -- so ``build_dataloaders`` disables
+        persistent workers on the Stage-2 train loader. Do not re-enable them without
+        replacing this with a shared-memory counter.
+        """
+        self.epoch = int(epoch)
 
     def __len__(self) -> int:
         return len(self.bags)
 
     def __getitem__(self, idx: int):
-        bag = self.bags[idx]
+        bag = _select_patches(
+            self.bags[idx], self.max_patches, self.seed, self.epoch, self.stochastic_cap
+        )
         label = bag[0][1]
 
         tensors = []
@@ -444,7 +491,9 @@ class PatchBagDataset(Dataset):
 
         patches = torch.stack(tensors)
         if self.return_id:
-            tree, image = _parse_ids(bag[0][0].name, self.fcfg)
+            # Identify by the FULL bag's first patch: a stochastic cap changes which patch
+            # lands at index 0, and the image id must not wobble between epochs.
+            tree, image = _parse_ids(self.bags[idx][0][0].name, self.fcfg)
             return patches, label, f"{tree}:{image}"
         return patches, label
 
@@ -479,18 +528,27 @@ def flatten_bags(bags: List[Bag]) -> List[Tuple[Path, int]]:
 # --------------------------------------------------------------------------- #
 # Loaders
 # --------------------------------------------------------------------------- #
-def _loader_kwargs(data_cfg: Dict) -> Dict:
+def _loader_kwargs(data_cfg: Dict, persistent: bool = True) -> Dict:
     num_workers = int(data_cfg.get("num_workers", 8) or 0)
     kwargs: Dict = dict(num_workers=num_workers, pin_memory=True)
     if num_workers > 0:
-        kwargs["persistent_workers"] = True
+        kwargs["persistent_workers"] = persistent
         kwargs["prefetch_factor"] = int(data_cfg.get("prefetch_factor", 4))
     return kwargs
 
 
 def build_dataloaders(cfg: Dict, seed: int = 42, train_subset_ratio: float = 1.0):
     """Stage-2 train/val loaders. Batch size is fixed to 1 (one bag); the effective
-    batch size is controlled by gradient accumulation in the training loop."""
+    batch size is controlled by gradient accumulation in the training loop.
+
+    The bag cap is applied inside the dataset, not at split time:
+
+    * **train** -- stochastic. Each epoch draws a different ``max_patches_per_bag`` subset
+      of every oversized image, so over a full run the model sees all of its patches.
+      A deterministic cap would permanently discard ~40% of the training patches at 224.
+    * **val** -- deterministic. A val bag that changed between epochs would add noise to
+      the exact curve early stopping and checkpointing read.
+    """
     data_cfg = cfg["data"]
     aug = cfg["augmentation"]
 
@@ -498,20 +556,30 @@ def build_dataloaders(cfg: Dict, seed: int = 42, train_subset_ratio: float = 1.0
     train_bags = _stratified_subset(splits["train"], train_subset_ratio, seed)
     val_bags = splits["val"]
 
-    # Stage-2 memory control: cap patches per bag so one oversized image (a high-res
-    # photo yielding hundreds of patches) can't dictate peak VRAM. null/0 disables.
     max_patches = data_cfg.get("max_patches_per_bag")
-    train_bags = _cap_bags(train_bags, max_patches, seed)
-    val_bags = _cap_bags(val_bags, max_patches, seed)
+    cap_report(train_bags, max_patches, label=" [train, stochastic]")
+    cap_report(val_bags, max_patches, label=" [val, deterministic]")
 
-    kwargs = _loader_kwargs(data_cfg)
+    train_ds = PatchBagDataset(
+        train_bags, build_train_transform(aug),
+        max_patches=max_patches, stochastic_cap=True, seed=seed,
+    )
+    val_ds = PatchBagDataset(
+        val_bags, build_eval_transform(aug),
+        max_patches=max_patches, stochastic_cap=False, seed=seed,
+    )
+
+    # persistent_workers=False on train: workers hold their own copy of the dataset, so a
+    # persistent worker would keep serving epoch 0's subsets forever and the stochastic cap
+    # would silently degrade into the deterministic one. Respawning workers costs a couple
+    # of seconds against a ~20-minute epoch.
     train_loader = DataLoader(
-        PatchBagDataset(train_bags, build_train_transform(aug)),
-        batch_size=1, shuffle=True, **kwargs,
+        train_ds, batch_size=1, shuffle=True,
+        **_loader_kwargs(data_cfg, persistent=False),
     )
     val_loader = DataLoader(
-        PatchBagDataset(val_bags, build_eval_transform(aug)),
-        batch_size=1, shuffle=False, **kwargs,
+        val_ds, batch_size=1, shuffle=False,
+        **_loader_kwargs(data_cfg, persistent=True),
     )
     return train_loader, val_loader
 

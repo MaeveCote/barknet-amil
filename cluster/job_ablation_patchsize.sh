@@ -17,26 +17,31 @@
 #SBATCH --cpus-per-task=12
 #SBATCH --mem=96G
 #SBATCH --time=12:00:00
-#SBATCH --output=%x-%A_%a.out
-#SBATCH --error=%x-%A_%a.out
+#SBATCH --output=/scratch/%u/logs/%x-%A_%a.out
+#SBATCH --error=/scratch/%u/logs/%x-%A_%a.out
 
 set -euo pipefail
+mkdir -p "$SCRATCH/logs"
 
 PATCH_SIZES=(224 288 384)
 PS=${PATCH_SIZES[$SLURM_ARRAY_TASK_ID]}
 
 export REPO_DIR="$HOME/BarkNet_ML"
+export CONFIG="$REPO_DIR/config/config_cluster.yaml"
 export PATCH_SIZE=$PS
 export MODEL_SIZE=nano
 export FOLD=0
+# Set EPOCHS_S1 from the job_stage1_probe.sh result (stop_epoch + patience), NOT this
+# placeholder. All three arms MUST use the same value or the ablation is confounded.
 export EPOCHS_S1=20
 export EPOCHS_S2=15
 export RUN_NAME="abl_patch${PS}_${MODEL_SIZE}"
 
-# Native resolution: a 384px patch is fed to the network at 384px. That means the three
-# runs differ in BOTH field of view and compute. If you want to isolate field of view at
-# constant compute, uncomment the next line so every patch is resized to 224.
-# export INPUT_SIZE=224
+# THE ABLATION KNOB. Resize every patch to 224 so the ONLY thing that varies across the
+# three arms is field of view (how much trunk a patch covers), not compute or feature
+# scale. Per your decision: bigger patches resized to 224. Comment this out only if you
+# deliberately want native-resolution (field-of-view AND compute both vary).
+export INPUT_SIZE=224
 
 # Bigger patches -> fewer patches per image -> smaller bags, but each patch costs ~2.9x
 # the activations at 384 vs 224. If 384 OOMs, lower the bag cap for that task only:

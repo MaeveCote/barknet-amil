@@ -25,6 +25,10 @@ EPOCHS_S2="${EPOCHS_S2:-15}"
 FOLD="${FOLD:-0}"
 RUN_NAME="${RUN_NAME:-${MODEL_SIZE}_${PATCH_SIZE}}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
+# all | 1 | 2   -- "1" is Stage 1 only; "2" is Stage 2 + test, resuming the backbone that
+# a previous "1" job left on $SCRATCH. Lets a long Stage 1 sit in the 24h partition while
+# Stage 2 + test go in a short one, chained with --dependency=afterok.
+STAGES="${STAGES:-all}"
 
 OUT="${OUT_ROOT:-$SCRATCH/runs}/$RUN_NAME"
 mkdir -p "$OUT"
@@ -35,7 +39,10 @@ export MODEL_SIZE
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
-cd "$REPO_DIR"
+SRC_DIR="${SRC_DIR:-$REPO_DIR/src}"
+[ -f "$SRC_DIR/pretrain_backbone.py" ] || { echo "No pretrain_backbone.py under $SRC_DIR"; exit 1; }
+export PYTHONPATH="$SRC_DIR:${PYTHONPATH:-}"
+cd "$SRC_DIR"
 
 # If the ImageNet weights live in a plain directory rather than the HF cache, point
 # PRETRAINED_FILE at the weight file and it is threaded into every stage.
@@ -60,38 +67,44 @@ echo "# epochs: stage1=$EPOCHS_S1  stage2=$EPOCHS_S2  fold=$FOLD"
 echo "# out   : $OUT"
 echo "##############################################################"
 
-# ---- Stage 1: patch-level backbone pretraining ------------------------------
-echo; echo "[$(date +%T)] ===== STAGE 1 ====="
-$PY pretrain_backbone.py "${COMMON[@]}" \
-    --output-dir "$OUT/pretrain" \
-    --epochs "$EPOCHS_S1" \
-    $EXTRA_ARGS
-
 BACKBONE="$OUT/pretrain/best_backbone.pth"
-[ -f "$BACKBONE" ] || { echo "Stage 1 produced no backbone at $BACKBONE"; exit 1; }
+MODEL="$OUT/train/best_model.pth"
+
+# ---- Stage 1: patch-level backbone pretraining ------------------------------
+if [ "$STAGES" = "all" ] || [ "$STAGES" = "1" ]; then
+  echo; echo "[$(date +%T)] ===== STAGE 1 ($EPOCHS_S1 epochs, early stopping) ====="
+  $PY pretrain_backbone.py "${COMMON[@]}" \
+      --output-dir "$OUT/pretrain" \
+      --epochs "$EPOCHS_S1" \
+      $EXTRA_ARGS
+  [ -f "$BACKBONE" ] || { echo "Stage 1 produced no backbone at $BACKBONE"; exit 1; }
+  echo; echo "[$(date +%T)] Stage-1 summary:"; cat "$OUT/pretrain/pretrain_summary.json" || true
+fi
 
 # ---- Stage 2: image-level AMIL fine-tuning ----------------------------------
-echo; echo "[$(date +%T)] ===== STAGE 2 ====="
-$PY train_model.py "${COMMON[@]}" \
-    --output-dir "$OUT/train" \
-    --backbone-checkpoint "$BACKBONE" \
-    --epochs "$EPOCHS_S2" \
-    $EXTRA_ARGS
+if [ "$STAGES" = "all" ] || [ "$STAGES" = "2" ]; then
+  [ -f "$BACKBONE" ] || { echo "No Stage-1 backbone at $BACKBONE -- run STAGES=1 first."; exit 1; }
 
-MODEL="$OUT/train/best_model.pth"
-[ -f "$MODEL" ] || { echo "Stage 2 produced no model at $MODEL"; exit 1; }
+  echo; echo "[$(date +%T)] ===== STAGE 2 ====="
+  $PY train_model.py "${COMMON[@]}" \
+      --output-dir "$OUT/train" \
+      --backbone-checkpoint "$BACKBONE" \
+      --epochs "$EPOCHS_S2" \
+      $EXTRA_ARGS
+  [ -f "$MODEL" ] || { echo "Stage 2 produced no model at $MODEL"; exit 1; }
 
-# ---- Test: AMIL vs. hard majority voting, on the same held-out trees ---------
-echo; echo "[$(date +%T)] ===== TEST (AMIL vs majority vote) ====="
-$PY test_model.py "${COMMON[@]}" \
-    --output-dir "$OUT/test" \
-    --checkpoint "$MODEL" \
-    --backbone-checkpoint "$BACKBONE" \
-    --mode both \
-    $EXTRA_ARGS
+  # ---- Test: 3 predictors x {full, capped} bags ------------------------------
+  echo; echo "[$(date +%T)] ===== TEST ====="
+  $PY test_model.py "${COMMON[@]}" \
+      --output-dir "$OUT/test" \
+      --checkpoint "$MODEL" \
+      --backbone-checkpoint "$BACKBONE" \
+      --mode both --bags both \
+      $EXTRA_ARGS
+  cat "$OUT/test/test_summary.json" || true
+fi
 
 echo
-echo "[$(date +%T)] DONE. Artefacts under $OUT"
-cat "$OUT/test/test_summary.json" || true
+echo "[$(date +%T)] DONE (stages=$STAGES). Artefacts under $OUT"
 echo
 echo "Right-size the next job with:  seff ${SLURM_JOB_ID:-<jobid>}"

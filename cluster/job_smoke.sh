@@ -14,12 +14,14 @@
 #SBATCH --cpus-per-task=12
 #SBATCH --mem=96G
 #SBATCH --time=3:00:00
-#SBATCH --output=%x-%j.out
-#SBATCH --error=%x-%j.out
+#SBATCH --output=/scratch/%u/logs/%x-%j.out
+#SBATCH --error=/scratch/%u/logs/%x-%j.out
 
 set -euo pipefail
+mkdir -p "$SCRATCH/logs"
 
 export REPO_DIR="$HOME/BarkNet_ML"
+export CONFIG="$REPO_DIR/config/config_cluster.yaml"
 export PATCH_SIZE=224
 export MODEL_SIZE=nano          # the size the ablation will use
 export EPOCHS_S1=2
