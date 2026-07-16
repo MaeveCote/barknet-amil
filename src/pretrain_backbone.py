@@ -130,7 +130,15 @@ def main(cfg, result_dir):
     best = {"val_loss": float("inf"), "val_acc": -1.0, "epoch": -1}
 
     with timer("Stage 1 Pretraining"):
-        early_stopper = EarlyStopping(patience=pre["early_stopping_patience"])
+        # min_epochs must clear the warmup, or the patience counter runs out while the LR
+        # is still ramping and val is legitimately flat. mode follows the checkpoint metric
+        # (val_acc = higher-is-better) so the stopper watches the SAME quantity we select on
+        # -- monitoring loss while checkpointing on acc stops runs for the wrong reason.
+        early_stopper = EarlyStopping(
+            patience=pre["early_stopping_patience"],
+            min_epochs=pre.get("min_epochs", 12),
+            mode="max" if metric == "val_acc" else "min",
+        )
 
         for epoch in range(pre["epochs"]):
             train_loss, train_acc = wrapper.train_patch_epoch(
@@ -169,7 +177,7 @@ def main(cfg, result_dir):
                 csv.DictWriter(f, fieldnames=fieldnames).writerow(row)
             print(f"[Stage 1] Epoch {epoch} | {row}", flush=True)
 
-            early_stopper(val_loss)
+            early_stopper(val_acc if metric == "val_acc" else val_loss)
             if early_stopper.early_stop:
                 print(f"Early stopping at epoch {epoch}.")
                 break

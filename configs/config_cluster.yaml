@@ -21,11 +21,11 @@ project:
   # COMPUTE-bound, not input-bound. More CPUs buy nothing; these three knobs do.
   perf:
     amp_dtype: bf16        # bf16 on H100 = fp16 speed, wider exponent, NO GradScaler.
-                           #   Set fp16 on older cards (RTX 3090) if bf16 underperforms.
+    #   Set fp16 on older cards (RTX 3090) if bf16 underperforms.
     channels_last: true    # NHWC: convnets reach the tensor cores without a transpose.
     compile_stage1: false   # torch.compile Stage 1 ONLY -- it has a fixed batch shape.
-                           #   Stage 2's bags are [N,C,H,W] with N varying per image, so
-                           #   compiling it would recompile on nearly every batch.
+      #   Stage 2's bags are [N,C,H,W] with N varying per image, so
+    #   compiling it would recompile on nearly every batch.
 
 data:
   # ${SLURM_TMPDIR} is expanded when the config is loaded; --patch-root overrides it.
@@ -48,8 +48,8 @@ data:
   max_patches_per_bag: 128
 
   species:
-     [BOJ, BOP, CHR, EPB, EPN, EPO, EPR, ERR, ERS, FRA, HEG,
-      MEL, ORA, OSV, PET, PIB, PIR, PRU, SAB, THO]
+    [BOJ, BOP, CHR, EPB, EPN, EPO, EPR, ERR, ERS, FRA, HEG,
+     MEL, ORA, OSV, PET, PIB, PIR, PRU, SAB, THO]
 
   filename:
     delimiter: "_"
@@ -73,16 +73,23 @@ model:
 # Tuned locally (Pico @ 224), best val loss 1.2340.
 pretrain:
   optimal_params: null      # values are inlined below; no tuning on the cluster
-  epochs: 20
+  epochs: 35
   batch_size: 128
-  warmup_ratio: 0.16
+  warmup_ratio: 0.16        # 35 epochs -> warmup ends ~epoch 5 (0.16 * 35 = 5.6)
   base_lr: 1.0062785194709649e-4
   weight_decay: 1.031294766456457e-3
   class_dropout: 0.11410614649915582
   drop_path_rate: 0.25703944838962833
-  early_stopping_patience: 10
+  early_stopping_patience: 35
+  # Never early-stop before this epoch. MUST exceed the warmup length (warmup_ratio*epochs
+  # ~= 5-6 here) or the patience counter runs out while the LR is still ramping and val is
+  # legitimately flat -- which is exactly what truncated the earlier runs at epoch 9/11.
+  # With patience 10 and min_epochs 15, the earliest possible stop is epoch 16, i.e. ~10
+  # real post-warmup epochs of no improvement before it gives up.
+  min_epochs: 15
   # val_loss | val_acc -- these DISAGREE on this dataset (label-smoothing overconfidence
   # pushes val loss up while val acc still climbs). Pick once, keep it for all folds.
+  # The early stopper now monitors THIS metric too (not always loss, as before).
   checkpoint_metric: val_acc
   resume: false
   output_dir: ${SCRATCH}/runs/pretrain
