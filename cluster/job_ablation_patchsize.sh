@@ -27,7 +27,7 @@ PATCH_SIZES=(224 288 384)
 PS=${PATCH_SIZES[$SLURM_ARRAY_TASK_ID]}
 
 export REPO_DIR="$HOME/BarkNet_ML"
-export CONFIG="$REPO_DIR/config/config_cluster.yaml"
+export CONFIG="$REPO_DIR/configs/config_cluster.yaml"
 export PATCH_SIZE=$PS
 export MODEL_SIZE=nano
 export FOLD=0

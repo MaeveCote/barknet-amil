@@ -23,7 +23,7 @@ project:
     amp_dtype: bf16        # bf16 on H100 = fp16 speed, wider exponent, NO GradScaler.
                            #   Set fp16 on older cards (RTX 3090) if bf16 underperforms.
     channels_last: true    # NHWC: convnets reach the tensor cores without a transpose.
-    compile_stage1: true   # torch.compile Stage 1 ONLY -- it has a fixed batch shape.
+    compile_stage1: false   # torch.compile Stage 1 ONLY -- it has a fixed batch shape.
                            #   Stage 2's bags are [N,C,H,W] with N varying per image, so
                            #   compiling it would recompile on nearly every batch.
 
@@ -80,7 +80,7 @@ pretrain:
   weight_decay: 1.031294766456457e-3
   class_dropout: 0.11410614649915582
   drop_path_rate: 0.25703944838962833
-  early_stopping_patience: 5
+  early_stopping_patience: 10
   # val_loss | val_acc -- these DISAGREE on this dataset (label-smoothing overconfidence
   # pushes val loss up while val acc still climbs). Pick once, keep it for all folds.
   checkpoint_metric: val_acc

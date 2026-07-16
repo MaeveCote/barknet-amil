@@ -28,17 +28,13 @@ set -euo pipefail
 mkdir -p "$SCRATCH/logs"
 
 export REPO_DIR="$HOME/BarkNet_ML"
-export CONFIG="$REPO_DIR/config/config_cluster.yaml"
+export CONFIG="$REPO_DIR/configs/config_cluster.yaml"
 export PATCH_SIZE=224
 export MODEL_SIZE=nano
 export FOLD=0
 
 export STAGES=1            # Stage 1 ONLY. Stage 2 is a separate, much shorter job.
-export EPOCHS_S1=50        # ceiling, not a target -- early stopping should fire first
-
-# patience 5 on val_acc (the criterion locked in config_cluster.yaml). Raise to 8 if you
-# want to be sure the plateau is real; each extra epoch of patience costs ~35 min.
-export EXTRA_ARGS="--set pretrain.early_stopping_patience=5"
+export EPOCHS_S1=35        # ceiling, not a target -- early stopping should fire first
 
 export RUN_NAME="s1probe_${MODEL_SIZE}_${PATCH_SIZE}"
 

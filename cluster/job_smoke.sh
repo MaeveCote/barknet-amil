@@ -21,7 +21,7 @@ set -euo pipefail
 mkdir -p "$SCRATCH/logs"
 
 export REPO_DIR="$HOME/BarkNet_ML"
-export CONFIG="$REPO_DIR/config/config_cluster.yaml"
+export CONFIG="$REPO_DIR/configs/config_cluster.yaml"
 export PATCH_SIZE=224
 export MODEL_SIZE=nano          # the size the ablation will use
 export EPOCHS_S1=2
