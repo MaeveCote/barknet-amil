@@ -104,7 +104,7 @@ train:
   instance_loss_weight: 0.6412880283086111
   attn_dropout: 0.41876045365913256
   class_dropout: 0.20525668127122992
-  early_stopping_patience: 5
+  early_stopping_patience: 20
   save_epoch_states: false  # per-epoch full-model dumps: fine locally, wasteful on Lustre
   optimal_params: null
   optimizer:
