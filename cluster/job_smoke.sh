@@ -22,7 +22,7 @@ mkdir -p "$SCRATCH/logs"
 
 export REPO_DIR="$HOME/BarkNet_ML"
 export CONFIG="$REPO_DIR/configs/config_cluster.yaml"
-export PATCH_SIZE=224
+export PATCH_SIZE=96
 export MODEL_SIZE=nano          # the size the ablation will use
 export EPOCHS_S1=2
 export EPOCHS_S2=2

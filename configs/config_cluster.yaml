@@ -80,7 +80,7 @@ pretrain:
   weight_decay: 1.031294766456457e-3
   class_dropout: 0.11410614649915582
   drop_path_rate: 0.25703944838962833
-  early_stopping_patience: 35
+  early_stopping_patience: 999
   # Never early-stop before this epoch. MUST exceed the warmup length (warmup_ratio*epochs
   # ~= 5-6 here) or the patience counter runs out while the LR is still ramping and val is
   # legitimately flat -- which is exactly what truncated the earlier runs at epoch 9/11.
@@ -104,7 +104,7 @@ train:
   instance_loss_weight: 0.6412880283086111
   attn_dropout: 0.41876045365913256
   class_dropout: 0.20525668127122992
-  early_stopping_patience: 20
+  early_stopping_patience: 999
   save_epoch_states: false  # per-epoch full-model dumps: fine locally, wasteful on Lustre
   optimal_params: null
   optimizer:
