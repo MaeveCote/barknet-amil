@@ -9,6 +9,7 @@ venv/
 # Data — never commit raw images or datasets
 data/
 datasets/
+paper/
 *.jpg
 *.jpeg
 *.png
