@@ -108,6 +108,60 @@ def attention_stats(df: pd.DataFrame) -> dict:
     return out
 
 
+def tree_level(df: pd.DataFrame) -> dict:
+    """Aggregate per-image predictions up to the TREE by hard majority vote.
+
+    This is the direct analogue of Carpentier et al.'s tree-level number (they vote across
+    all images of a tree, reaching 97.81%). The bag identifier is "tree:image" (see
+    PatchBagDataset.__getitem__), so the tree is simply the token before the colon --
+    nothing has to be re-inferred.
+
+    Ties are broken by (count desc, class name asc) so the result is deterministic.
+    Note there is no tree-level attention statistic: attention is defined within a bag
+    (one image), so pooling it across images of a tree would not mean anything.
+    """
+    out = {}
+    if "image_id" not in df.columns:
+        return out
+    ids = df["image_id"].astype(str)
+    if not ids.str.contains(":").any():
+        return out                      # identifier isn't "tree:image"; can't group
+
+    work = df.copy()
+    work["tree_id"] = ids.str.split(":").str[0]
+
+    def vote(series: pd.Series) -> str:
+        counts = series.value_counts()
+        top = sorted(counts.items(), key=lambda kv: (-kv[1], str(kv[0])))[0][0]
+        return top
+
+    # ground truth per tree: every image of a tree carries the same species
+    truth = work.groupby("tree_id")["true_class"].agg(vote)
+    out["n_trees"] = int(truth.shape[0])
+    out["mean_images_per_tree"] = float(work.groupby("tree_id").size().mean())
+
+    tree_correct = {}
+    for p in PREDICTORS:
+        col = f"{p}_pred"
+        if col not in work.columns:
+            continue
+        pred = work.groupby("tree_id")[col].agg(vote)
+        ok = (pred == truth).reindex(truth.index)
+        tree_correct[p] = ok.tolist()
+        out[f"tree_{p}_accuracy"] = float(ok.mean())
+
+    for a, b in (("amil", "amil_vote"), ("amil", "vote")):
+        if a in tree_correct and b in tree_correct:
+            mc = mcnemar(tree_correct[a], tree_correct[b])
+            out[f"tree_{a}_vs_{b}_delta_pp"] = 100.0 * (
+                    out[f"tree_{a}_accuracy"] - out[f"tree_{b}_accuracy"])
+            out[f"tree_{a}_vs_{b}_p"] = mc["p_value"]
+            out[f"tree_{a}_vs_{b}_discordant"] = mc["discordant"]
+            out[f"tree_{a}_vs_{b}_a_only"] = mc["a_only_correct"]
+            out[f"tree_{a}_vs_{b}_b_only"] = mc["b_only_correct"]
+    return out
+
+
 def fold_metrics(xlsx: Path, sheet: str = "Pred_full") -> dict | None:
     """Recompute every reported number for one fold from its per-bag rows."""
     try:
@@ -139,6 +193,7 @@ def fold_metrics(xlsx: Path, sheet: str = "Pred_full") -> dict | None:
             res[f"{a}_vs_{b}_b_only"] = mc["b_only_correct"]
 
     res.update(attention_stats(df))
+    res.update(tree_level(df))
     return res
 
 
@@ -267,6 +322,34 @@ def main():
             else:
                 cells.append(f"{str(v):>12}")
         print(" | ".join(cells))
+
+    # ---- tree-level table (Carpentier-comparable) -----------------------------------
+    if "tree_amil_accuracy_mean" in master.columns:
+        tcols = [("axis_value", "arm"), ("n_trees_mean", "trees"),
+                 ("mean_images_per_tree_mean", "img/tree"),
+                 ("tree_amil_accuracy_mean", "AMIL"),
+                 ("tree_amil_vote_accuracy_mean", "amil_vote"),
+                 ("tree_vote_accuracy_mean", "vote"),
+                 ("tree_amil_vs_amil_vote_delta_pp_mean", "AMIL-vote pp"),
+                 ("tree_amil_vs_amil_vote_p_mean", "mean p")]
+        hdr2 = " | ".join(f"{lbl:>12}" for _, lbl in tcols)
+        print("\nTREE level (majority vote over each tree's images -- Carpentier-comparable)")
+        print(hdr2)
+        print("-" * len(hdr2))
+        for _, r in master.iterrows():
+            cells = []
+            for key, _ in tcols:
+                v = r.get(key)
+                if v is None or (isinstance(v, float) and math.isnan(v)):
+                    cells.append(f"{'-':>12}")
+                elif isinstance(v, float):
+                    cells.append(f"{v:>12.4f}")
+                else:
+                    cells.append(f"{str(v):>12}")
+            print(" | ".join(cells))
+        print("\nNOTE: the per-fold p-values are NOT poolable by averaging -- the 'mean p'\n"
+              "column is descriptive only. For a CV-level significance claim, report the\n"
+              "per-fold deltas (mean +/- std) and/or pool the paired decisions across folds.")
 
     print("\nPer-arm mean +/- std for every metric is in master_summary.csv")
 
