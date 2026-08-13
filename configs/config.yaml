@@ -28,10 +28,10 @@ data:
   # The 23 barknet 1.0 species codes (folder names). Trim to the classes you
   # actually train on; (ERB, PEG, PID) were dropped in the original barknet paper.
   species:
-     [BOJ, BOP, CHR, EPB, EPN, EPO, EPR, ERR, ERS, FRA, HEG,
-      MEL, ORA, OSV, PET, PIB, PIR, PRU, SAB, THO]
-#    [BOJ, BOP, CHR, EPB, EPN, EPO, EPR, ERB, ERR, ERS, FRA, HEG,
-#     MEL, ORA, OSV, PEG, PET, PIB, PID, PIR, PRU, SAB, THO]
+    [BOJ, BOP, CHR, EPB, EPN, EPO, EPR, ERR, ERS, FRA, HEG,
+     MEL, ORA, OSV, PET, PIB, PIR, PRU, SAB, THO]
+  #    [BOJ, BOP, CHR, EPB, EPN, EPO, EPR, ERB, ERR, ERS, FRA, HEG,
+  #     MEL, ORA, OSV, PEG, PET, PIB, PID, PIR, PRU, SAB, THO]
 
   # How to parse ids from a patch filename, e.g. "<tree>_<image>_<patch>.png".
   # tree_id_index drives the leakage-safe split; image_id_index defines the bag.
@@ -41,7 +41,7 @@ data:
     image_id_index: 1
 
 model:
-  size: pico # atto | femto | pico | nano | tiny | base  (there is no convnextv2_small)
+  size: nano # atto | femto | pico | nano | tiny | base  (there is no convnextv2_small)
   weights: default # default (ImageNet-pretrained) | none (from scratch)
   pretrained_checkpoint: null # optional .pth to resume a full AMIL model
   # Stage-1 backbone used to initialise Stage-2 (set null to skip two-stage training).
@@ -53,30 +53,39 @@ model:
 
 # Stage 1: patch-level backbone pretraining (per-patch classifier).
 pretrain:
-  optimal_params: ./runs/tune/optimal_params_convnext_amil_pretrain_default_pico.yaml
-  epochs: 2
-  batch_size: 64 # standard mini-batches of individual patches
-  warmup_ratio: 0.16 # fraction of epochs spent in linear warmup
-  base_lr: 1.0e-3
-  weight_decay: 0.05
+  optimal_params: null      # tuned values inlined below (the tune YAML doesn't exist locally)
+  epochs: 40
+  batch_size: 128           # tuned Pico@224 value
+  warmup_ratio: 0.16
+  base_lr: 1.0062785194709649e-4   # tuned Pico@224 (Stage-1 / from-ImageNet rate)
+  weight_decay: 1.031294766456457e-3
+  class_dropout: 0.11410614649915582
+  drop_path_rate: 0.25703944838962833
+  min_epochs: 15            # early-stopping floor (must clear warmup)
   early_stopping_patience: 10
   # val_loss | val_acc -- they disagree on this dataset (label smoothing pushes val loss
   # up while val acc still climbs). Pick one and use it for every fold.
-  checkpoint_metric: val_loss
+  checkpoint_metric: val_acc
   resume: false # resume from best_backbone.pth in output_dir
   output_dir: ./runs/pretrain
 
 # Stage 2: image-level AMIL fine-tuning (loads the Stage-1 backbone).
 train:
-  epochs: 2
-  warmup_ratio: 0.2 # fraction of epochs spent in linear warmup
-  accumulation_steps: 16 # effective batch size (in bags/images)
-  instance_loss_weight: 0.5 # lambda in  L = L_bag + lambda * L_instance
-  early_stopping_patience: 10
-  save_epoch_states: false # dump a full state_<epoch>.pth every epoch
+  epochs: 15
+  warmup_ratio: 0.2
+  accumulation_steps: 32          # tuned Stage-2 value
+  instance_loss_weight: 0.6412880283086111
+  attn_dropout: 0.41876045365913256
+  class_dropout: 0.20525668127122992
+  base_lr: 1.0337768182267276e-5  # tuned Stage-2 (fine-tune-an-existing-backbone rate)
+  weight_decay: 6.418189515676058e-4
+  lr_multiplier: 15
+  min_epochs: 5
+  early_stopping_patience: 5
+  save_epoch_states: false
   output_dir: ./runs/train
-  optimal_params: null # path to a hyperparameter_tuning.py output YAML to override the values below
-  optimizer: # leave null to use defaults
+  optimal_params: null            # tuned values inlined above
+  optimizer:
     base_lr: null
     weight_decay: null
     lr_multiplier: null
