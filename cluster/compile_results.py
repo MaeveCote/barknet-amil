@@ -38,6 +38,10 @@ import pandas as pd
 
 # abl_p224_nano_f3  ->  arm="p224_nano", axis_value=224, model="nano", fold=3
 RUN_RE = re.compile(r"^abl_(?:p(?P<patch>\d+)|msize)_(?P<model>[a-z]+)(?:_(?P<msize_patch>\d+))?_f(?P<fold>\d+)$")
+# bag-size ablation runs written by run_bagsize_ablation.ps1:  bag16_f0
+BAG_RE = re.compile(r"^bag(?P<cap>\d+)_f(?P<fold>\d+)$")
+# single-stage ablation:  abl_1stage_nano_224_f0
+ONESTAGE_RE = re.compile(r"^abl_1stage_(?P<model>[a-z]+)_(?P<patch>\d+)_f(?P<fold>\d+)$")
 
 PREDICTORS = ["amil", "amil_vote", "vote"]
 
@@ -63,6 +67,14 @@ def mcnemar(a_correct, b_correct) -> dict:
 
 def parse_run_name(name: str):
     """Return (arm, axis_name, axis_value, model, fold) or None if it isn't a run dir."""
+    b = BAG_RE.match(name)
+    if b:                                     # bag-size ablation: bag16_f0
+        return (f"bag_{b.group('cap')}", "bag_cap",
+                int(b.group("cap")), "nano", int(b.group("fold")))
+    o = ONESTAGE_RE.match(name)
+    if o:                                     # single-stage ablation: abl_1stage_nano_224_f0
+        return (f"onestage_{o.group('model')}", "training",
+                "1stage", o.group("model"), int(o.group("fold")))
     m = RUN_RE.match(name)
     if not m:
         return None
@@ -162,6 +174,30 @@ def tree_level(df: pd.DataFrame) -> dict:
     return out
 
 
+def macro_f1(truth: pd.Series, pred: pd.Series) -> float:
+    """Unweighted mean of per-class F1 over the classes PRESENT in truth.
+
+    Prefers sklearn (handles all edge cases); falls back to a manual computation if it is
+    unavailable. A class with no predictions and no support contributes F1=0, matching
+    sklearn's zero_division=0 default.
+    """
+    try:
+        from sklearn.metrics import f1_score
+        labels = sorted(truth.unique())
+        return float(f1_score(truth, pred, labels=labels, average="macro", zero_division=0))
+    except Exception:
+        classes = sorted(set(truth))
+        f1s = []
+        for c in classes:
+            tp = int(((pred == c) & (truth == c)).sum())
+            fp = int(((pred == c) & (truth != c)).sum())
+            fn = int(((pred != c) & (truth == c)).sum())
+            prec = tp / (tp + fp) if (tp + fp) else 0.0
+            rec = tp / (tp + fn) if (tp + fn) else 0.0
+            f1s.append(2 * prec * rec / (prec + rec) if (prec + rec) else 0.0)
+        return sum(f1s) / len(f1s) if f1s else 0.0
+
+
 def fold_metrics(xlsx: Path, sheet: str = "Pred_full") -> dict | None:
     """Recompute every reported number for one fold from its per-bag rows."""
     try:
@@ -175,13 +211,19 @@ def fold_metrics(xlsx: Path, sheet: str = "Pred_full") -> dict | None:
 
     res = {"n_images": int(len(df))}
     correct = {}
+    truth = df["true_class"].astype(str)
     for p in PREDICTORS:
         col = f"{p}_pred"
         if col not in df.columns:
             continue
-        ok = (df[col] == df["true_class"])
+        pred = df[col].astype(str)
+        ok = (pred == truth)
         correct[p] = ok.tolist()
         res[f"{p}_accuracy"] = float(ok.mean())
+        # Macro-F1: unweighted mean of per-class F1. Matters on BarkNet because the classes
+        # are imbalanced -- accuracy can look fine while rare species do poorly, and macro-F1
+        # (which weights every class equally) surfaces that.
+        res[f"{p}_macro_f1"] = float(macro_f1(truth, pred))
 
     for a, b in (("amil", "amil_vote"), ("amil", "vote")):
         if a in correct and b in correct:
@@ -215,7 +257,10 @@ def main():
     ap.add_argument("--runs-root", required=True, help="folder containing abl_* run dirs")
     ap.add_argument("--pattern", default="abl_*_f*", help="glob for run dirs")
     ap.add_argument("--sheet", default="Pred_full",
-                    help="per-bag sheet: Pred_full (uncapped, primary) or Pred_capped_128")
+                    help="per-bag sheet. Pred_full = uncapped test (primary elsewhere). "
+                         "Pred_capped_128 etc = a specific capped pass. "
+                         "'auto' = for each run pick its OWN Pred_capped_<cap> sheet, "
+                         "which is what the bag-size ablation needs (matched train/test cap)")
     ap.add_argument("--out-dir", default="compiled")
     args = ap.parse_args()
 
@@ -235,14 +280,21 @@ def main():
             print(f"  - {run_dir.name}: no test results yet, skipping")
             continue
 
-        print(f"  + {run_dir.name}")
-        met = fold_metrics(xlsx, args.sheet)
+        sheet = args.sheet
+        if sheet == "auto":
+            # matched train/test cap -- the deployment-relevant number for a bag ablation
+            bm = BAG_RE.match(run_dir.name)
+            sheet = f"Pred_capped_{bm.group('cap')}" if bm else "Pred_full"
+
+        print(f"  + {run_dir.name}  [{sheet}]")
+        met = fold_metrics(xlsx, sheet)
         if met is None:
             continue
 
         arm, axis_name, axis_value, model, fold = parsed[0], parsed[1], parsed[2], parsed[3], parsed[4]
         row = {"run": run_dir.name, "arm": arm, "axis": axis_name,
-               "axis_value": axis_value, "model": model, "fold": fold}
+               "axis_value": axis_value, "model": model, "fold": fold,
+               "sheet": sheet}
         row.update(stage1_val_acc(run_dir))
         row.update(met)
         rows.append(row)
@@ -257,7 +309,7 @@ def main():
 
     # ---- aggregate across folds within each arm -------------------------------------
     numeric = [c for c in per_fold.columns
-               if c not in ("run", "arm", "axis", "axis_value", "model", "fold")
+               if c not in ("run", "arm", "axis", "axis_value", "model", "fold", "sheet")
                and pd.api.types.is_numeric_dtype(per_fold[c])]
 
     agg_rows = []
