@@ -42,6 +42,8 @@ RUN_RE = re.compile(r"^abl_(?:p(?P<patch>\d+)|msize)_(?P<model>[a-z]+)(?:_(?P<ms
 BAG_RE = re.compile(r"^bag(?P<cap>\d+)_f(?P<fold>\d+)$")
 # single-stage ablation:  abl_1stage_nano_224_f0
 ONESTAGE_RE = re.compile(r"^abl_1stage_(?P<model>[a-z]+)_(?P<patch>\d+)_f(?P<fold>\d+)$")
+# final "best model": final_nano_p512_1stage_f0
+FINAL_RE = re.compile(r"^final_(?P<model>[a-z]+)_p(?P<patch>\d+)_(?P<train>\w+?)_f(?P<fold>\d+)$")
 
 PREDICTORS = ["amil", "amil_vote", "vote"]
 
@@ -75,6 +77,10 @@ def parse_run_name(name: str):
     if o:                                     # single-stage ablation: abl_1stage_nano_224_f0
         return (f"onestage_{o.group('model')}", "training",
                 "1stage", o.group("model"), int(o.group("fold")))
+    fn = FINAL_RE.match(name)
+    if fn:                                    # final model: final_nano_p512_1stage_f0
+        return (f"final_{fn.group('model')}_p{fn.group('patch')}", "final_model",
+                int(fn.group("patch")), fn.group("model"), int(fn.group("fold")))
     m = RUN_RE.match(name)
     if not m:
         return None
