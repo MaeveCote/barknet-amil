@@ -3,7 +3,7 @@
 #
 # Contract (set these before sourcing, or accept the defaults):
 #   REPO_DIR      path to the git checkout            (default $HOME/BarkNet_ML)
-#   CONFIG        base config yaml                    (default $REPO_DIR/configs/config_cluster.yaml)
+#   CONFIG        base config yaml                    (default $REPO_DIR/configs/config.yaml)
 #   PATCH_SIZE    224 | 288 | 384                     (no default)
 #   PATCH_TAR     tarball of the cut patches          (default $SCRATCH/data/barknet_patches_${PATCH_SIZE}.tar)
 #   HF_HOME       huggingface cache with the weights  (default $HOME/.cache/huggingface)
@@ -13,7 +13,7 @@
 # ---------------------------------------------------------------- fail fast --
 : "${PATCH_SIZE:?set PATCH_SIZE (224|288|384)}"
 REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
-CONFIG="${CONFIG:-$REPO_DIR/configs/config_cluster.yaml}"
+CONFIG="${CONFIG:-$REPO_DIR/configs/config.yaml}"
 PATCH_TAR="${PATCH_TAR:-$SCRATCH/data/barknet_patches_${PATCH_SIZE}.tar}"
 
 [ -d "$REPO_DIR" ] || { echo "REPO_DIR does not exist: $REPO_DIR"; exit 1; }

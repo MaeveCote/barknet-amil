@@ -28,9 +28,9 @@
     RESUMABLE: a fold whose best_backbone.pth exists is skipped.
 #>
 param(
-    [string] $ImageRoot = "G:\data\barknet_raw",
-    [string] $RepoRoot  = "G:\Source\BarkNet_ML\BarkNet_ML",
-    [string] $OutRoot   = "G:\Source\BarkNet_ML\runs_wholeimage",
+    [string] $ImageRoot = ".\data\barknet_raw",
+    [string] $RepoRoot  = (Split-Path $PSScriptRoot -Parent),
+    [string] $OutRoot   = ".\runs_wholeimage",
     [int[]]  $Folds     = @(0, 1, 2, 3, 4),
     [int]    $Epochs    = 40,
     [int]    $BatchSize = 64,        # whole images at 224; 64 fits 24 GB easily

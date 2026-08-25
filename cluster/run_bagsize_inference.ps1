@@ -30,10 +30,10 @@
     RESUMABLE: a (N, fold) whose test_summary.json already exists is skipped.
 #>
 param(
-    [string]  $RunsDir   = "G:\Source\BarkNet_ML\runs",
-    [string]  $PatchRoot = "G:\data\patches_224\train",
-    [string]  $RepoRoot  = "G:\Source\BarkNet_ML\BarkNet_ML",
-    [string]  $OutRoot   = "G:\Source\BarkNet_ML\bagsize_infer",
+    [string]  $RunsDir   = ".\runs",
+    [string]  $PatchRoot = ".\data\patches_224\train",
+    [string]  $RepoRoot  = (Split-Path $PSScriptRoot -Parent),
+    [string]  $OutRoot   = ".\bagsize_infer",
     [int[]]   $BagSizes  = @(4, 8, 16, 32, 64, 128, 256),
     [int[]]   $Folds     = @(0, 1, 2, 3, 4),
     [string]  $Device    = "cuda:0",

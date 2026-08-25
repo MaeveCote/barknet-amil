@@ -3,9 +3,9 @@
     the bag loader: one resized image -> one prediction through best_backbone.pth).
 #>
 param(
-    [string] $ImageRoot = "G:\Source\BarkNet_ML\BarkNet_ML\data\barknet\dataset",
-    [string] $WholeRoot = "G:\Source\BarkNet_ML\runs_wholeimage",
-    [string] $RepoRoot  = "G:\Source\BarkNet_ML\BarkNet_ML",
+    [string] $ImageRoot = ".\data\barknet\dataset",
+    [string] $WholeRoot = ".\runs_wholeimage",
+    [string] $RepoRoot  = (Split-Path $PSScriptRoot -Parent),
     [int[]]  $Folds     = @(0,1,2,3,4),
     [string] $ModelSize = "nano",
     [string] $Device    = "cuda:0"

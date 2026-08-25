@@ -3,7 +3,7 @@
 # Each entry in `experiments` triggers the full training and testing of the config.
 # =============================================================================
 
-base_config: G:\Source\BarkNet_ML\BarkNet_ML\config\config.yaml # general parameters (data, augmentation, etc.)
+base_config: ./configs/config.yaml # general parameters (data, augmentation, etc.); resolved relative to the cwd this is run from (repo root)
 result_dir: ./runs/tuning
 prefix: initialTuning # experiment dirs: <prefix>_<size>_<patch_size>
 

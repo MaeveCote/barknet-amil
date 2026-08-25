@@ -25,6 +25,7 @@ runs/
 
 # Jupyter
 .ipynb_checkpoints/
+notebooks/
 
 # OS
 .DS_Store
@@ -32,3 +33,7 @@ Thumbs.db
 
 # Optuna
 *.db
+
+# IDE
+.idea/
+.vscode/
