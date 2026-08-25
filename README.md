@@ -21,7 +21,6 @@ configs/     the ONE config (config.yaml) + the batch-sweep definition
 src/         portable pipeline: data prep, training, evaluation, shared helpers
 scripts/     local Windows entry points (.bat) — the generic reproduction path
 cluster/     SLURM/DRAC job scripts + Windows-local ablation drivers used for the paper
-tests/       offline correctness checks (split leakage, determinism, model plumbing)
 figures/     exported paper figures: attention_grid.pdf, attention_overlay.pdf,
              bagsize_accuracy.pdf
 docs/        hypothesis tracker (H1-H7) used while running the ablations
@@ -169,12 +168,6 @@ two splits — this is a hard runtime guarantee, not just a one-time check.
   The tuned hyperparameter values actually used for the paper are already inlined in
   `configs/config.yaml`, so this doesn't block reproducing results, only re-running the
   search from scratch.
-- **`tests/test_pipeline.py`** expects a synthetic fixture at `/tmp/fake/train` (5
-  species × 6 trees × 3 images, with one deliberately oversized 40-patch bag) that no
-  script in this repo generates — it isn't runnable as committed. The checks themselves
-  (tree-level disjointness, k-fold partitioning, stochastic bag-cap behaviour, Stage-1→
-  Stage-2 checkpoint transfer, chunked-inference equivalence) are still useful reading for
-  understanding the split/loader invariants even without running them.
 - `cluster/run_wholeimage_test.ps1`, `run_eval_wholeimage.ps1`, `run_bagsize_inference.ps1`,
   and `run_compile.sh` all assume checkpoints/run directories from a prior training pass
   already exist (locally or on `$SCRATCH`) — they're inference/compilation passes over
