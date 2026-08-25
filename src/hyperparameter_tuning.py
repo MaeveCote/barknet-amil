@@ -5,8 +5,16 @@ pruning. The search space adapts to whether weights are pretrained or from scrat
 Best parameters are written to a YAML file that train.py can consume via
 ``train.optimal_params``.
 
+KNOWN LIMITATION: batch_training.py and scripts/2-1_*.bat / 3-1_*.bat invoke this script
+with a ``--stage pretrain|board`` flag, but no such flag is defined here and the search
+space below does not branch on stage -- it always tunes whatever ``cfg["model"]`` /
+``cfg["tune"]`` describe. Passing ``--stage`` will fail argparse. Add the flag (and the
+corresponding pretrain-vs-board search-space branching, e.g. different LR ranges for a
+from-scratch Stage-1 backbone vs. a Stage-2 fine-tune) before relying on this from
+batch_training.py.
+
 Usage:
-    python tune.py -c configs/config.yaml
+    python hyperparameter_tuning.py -c configs/config.yaml
 """
 import argparse
 from pathlib import Path
@@ -15,11 +23,11 @@ import optuna
 import torch
 import yaml
 
-import helper.data as dt
+import helper.data_loader as dt
 from helper.early_stopping import EarlyStopping
 from helper.optimizer_scheduler import build_optimizer_and_scheduler
 from helper.timing import timer
-from helper.wrapper import ConvNeXtAMIL
+from helper.model_wrapper import ConvNeXtAMIL
 
 
 class Objective:
