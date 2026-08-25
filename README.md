@@ -8,18 +8,11 @@ with a ConvNeXt-V2 backbone, evaluated under a **tree-level, leakage-safe 5-fold
 cross-validation** on [BarkNet 1.0](https://github.com/ulaval-damas/tree-bark-classification)
 (23 Canadian tree species; this project trains on the 20-species subset used by prior
 work, see `configs/config.yaml`).
-Follows up on Carpentier et al. (2018) and Cui et al. (2023), both of which split at the
-image level; a random image-level split lets crops of the *same tree* land in both train
-and test, which inflates accuracy. This project splits at the **tree** level instead (see
-[Leakage-safe splitting](#leakage-safe-splitting-and-fold-generation) below) and reports
-five ablations against that corrected baseline: patch size, aggregation (majority vote vs.
-AMIL), training regime (1- vs. 2-stage), backbone capacity, and test-time bag size, plus a
-whole-image baseline.
 
 ## Repo map
 
 ```
-configs/     the ONE config (config.yaml) + the batch-sweep definition
+configs/     the one config (config.yaml) + the batch-sweep definition
 src/         portable pipeline: data prep, training, evaluation, shared helpers
 scripts/     local Windows entry points (.bat) — the generic reproduction path
 cluster/     SLURM/DRAC job scripts + Windows-local ablation drivers used for the paper
@@ -151,19 +144,6 @@ dropping a species doesn't perturb the other classes' assignments. `split_trees(
 two splits — this is a hard runtime guarantee, not just a one-time check.
 `configs/config.yaml` already defaults to `n_folds: 5`; reproduce fold *N* with
 `--fold N` (or the `job_train.sh` array, where `SLURM_ARRAY_TASK_ID` becomes the fold).
-
-## Known issues
-
-- **`src/hyperparameter_tuning.py`** is invoked with `--stage pretrain|board` by
-  `batch_training.py` and `scripts/2-1_*.bat`/`3-1_*.bat`, but defines no such flag and
-  doesn't branch its search space by stage — it will fail argparse if called that way.
-  The tuned hyperparameter values actually used for the paper are already inlined in
-  `configs/config.yaml`, so this doesn't block reproducing results, only re-running the
-  search from scratch.
-- `cluster/run_wholeimage_test.ps1`, `run_eval_wholeimage.ps1`, `run_bagsize_inference.ps1`,
-  and `run_compile.sh` all assume checkpoints/run directories from a prior training pass
-  already exist (locally or on `$SCRATCH`) — they're inference/compilation passes over
-  completed runs, not standalone entry points.
 
 ## License
 
