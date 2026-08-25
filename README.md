@@ -5,7 +5,9 @@ Images: A Leakage-Safe Ablation Study"* (paper: arXiv link TBD).
 
 Attention-based Multiple Instance Learning (AMIL) over patches cut from bark images,
 with a ConvNeXt-V2 backbone, evaluated under a **tree-level, leakage-safe 5-fold
-cross-validation** on [BarkNet 1.0](https://github.com/ulaval-damas/tree-bark-classification).
+cross-validation** on [BarkNet 1.0](https://github.com/ulaval-damas/tree-bark-classification)
+(23 Canadian tree species; this project trains on the 20-species subset used by prior
+work, see `configs/config.yaml`).
 Follows up on Carpentier et al. (2018) and Cui et al. (2023), both of which split at the
 image level; a random image-level split lets crops of the *same tree* land in both train
 and test, which inflates accuracy. This project splits at the **tree** level instead (see
@@ -21,9 +23,6 @@ configs/     the ONE config (config.yaml) + the batch-sweep definition
 src/         portable pipeline: data prep, training, evaluation, shared helpers
 scripts/     local Windows entry points (.bat) — the generic reproduction path
 cluster/     SLURM/DRAC job scripts + Windows-local ablation drivers used for the paper
-figures/     exported paper figures: attention_grid.pdf, attention_overlay.pdf,
-             bagsize_accuracy.pdf
-docs/        hypothesis tracker (H1-H7) used while running the ablations
 ```
 
 `src/` has no dependency on `cluster/` or `scripts/` — every entry point is a plain
@@ -135,13 +134,6 @@ The `.ps1` whole-image/bag-size drivers and `eval_wholeimage.py` run **locally**
 (Windows, no SLURM) against checkpoints already produced on the cluster — they're
 inference/analysis passes, not training jobs.
 
-### Figures
-
-`figures/*.pdf` are the exported attention-map and bag-size-accuracy figures used in the
-paper (attention grid, attention overlay, bag-size accuracy curve). The notebook that
-generated exploratory versions of these plus training curves and confusion matrices is
-not tracked in this repo (see `.gitignore`) — it wasn't part of the final paper pipeline.
-
 ## Leakage-safe splitting and fold generation
 
 The train/val/test split is **tree-level** (a tree's patches/images never appear in more
@@ -172,6 +164,10 @@ two splits — this is a hard runtime guarantee, not just a one-time check.
   and `run_compile.sh` all assume checkpoints/run directories from a prior training pass
   already exist (locally or on `$SCRATCH`) — they're inference/compilation passes over
   completed runs, not standalone entry points.
+
+## License
+
+[MIT](LICENSE).
 
 ## Citation
 
