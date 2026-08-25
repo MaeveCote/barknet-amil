@@ -1,6 +1,7 @@
 """Offline checks of the parts that are expensive to get wrong on a cluster.
 
-Run:  cd /home/claude/BarkNet_ML && python ../tests/test_pipeline.py
+Run from the repo root (reads configs/config_cluster.yaml by relative path):
+    python tests/test_pipeline.py
 """
 import os
 import sys
@@ -10,7 +11,7 @@ from pathlib import Path
 import torch
 import yaml
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "BarkNet_ML"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import helper.data_loader as dt  # noqa: E402
 from helper.config_cli import expand_env, set_in, get_in  # noqa: E402
