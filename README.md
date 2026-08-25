@@ -17,13 +17,13 @@ whole-image baseline.
 ## Repo map
 
 ```
-configs/     YAML configs (local, cluster, ablation, batch-sweep)
+configs/     the ONE config (config.yaml) + the batch-sweep definition
 src/         portable pipeline: data prep, training, evaluation, shared helpers
 scripts/     local Windows entry points (.bat) — the generic reproduction path
 cluster/     SLURM/DRAC job scripts + Windows-local ablation drivers used for the paper
 tests/       offline correctness checks (split leakage, determinism, model plumbing)
-notebooks/   figure-generating notebook + exported PDFs (patch grid, confusion matrix,
-             training curves, bag-size curve)
+figures/     exported paper figures: attention_grid.pdf, attention_overlay.pdf,
+             bagsize_accuracy.pdf
 docs/        hypothesis tracker (H1-H7) used while running the ablations
 ```
 
@@ -70,15 +70,15 @@ before committing to a model size on your card.
    [ulaval-damas/tree-bark-classification](https://github.com/ulaval-damas/tree-bark-classification).
 2. Place the per-species folders under `data/barknet/dataset/<SPECIES>/*.jpg`
    (`data/` is gitignored — nothing here is ever committed).
-3. Cut patches (tree-stratified train/test split happens here, at cut time):
+3. Cut patches into a single root (the runtime k-fold split below carves train/val/test
+   out of this one folder — no separate pre-cut test set needed):
 
    ```bash
-   python src/data_preparation/cut_patches.py data/barknet/dataset data/barknet/patches_224 --patch-size 224 --test-ratio 0.15
+   python src/data_preparation/cut_patches.py data/barknet/dataset data/barknet/patches_224 --patch-size 224 --test-ratio 0.0
    ```
 
-   or `scripts/1_prepare_data.bat` (patch size 384 by default — edit the `.bat` for
-   other sizes). `--test-ratio 0` cuts everything into `train/` only, which is what the
-   runtime k-fold split below expects.
+   or `scripts/1_prepare_data.bat` (same command, patch size 224 to match
+   `configs/config.yaml`'s default — edit both together if you change patch size).
 
 ## Reproducing the paper's results
 
@@ -92,12 +92,15 @@ scripts/4_testing_model.bat           # evaluation (amil / amil_vote / vote, ful
 ```
 
 Each `.bat` just `cd`s to the repo root and calls the matching `src/*.py -c
-configs/config.yaml`. Edit `configs/config.yaml` for patch root, model size, fold, etc.,
-or override on the command line, e.g.:
+configs/config.yaml` — the one config file everything reads. Edit it directly for patch
+root, model size, fold, etc., or override on the command line, e.g.:
 
 ```bash
-python src/train_model.py -c configs/config.yaml --fold 2 --set data.split.n_folds=5
+python src/train_model.py -c configs/config.yaml --fold 2
 ```
+
+(5-fold CV is already `config.yaml`'s default — see
+[Leakage-safe splitting](#leakage-safe-splitting-and-fold-generation).)
 
 `scripts/2-1_*.bat` / `3-1_*.bat` (Optuna search) and `scripts/batch_training.bat` (sweep
 orchestration) are wired up the same way but currently hit the `hyperparameter_tuning.py`
@@ -111,26 +114,34 @@ allocation (or override at submit time: `sbatch --account=<you> cluster/job_x.sh
 `cluster/00_prefetch_weights.sh` run once on a login node first (compute nodes have no
 internet). See `cluster/common.sh` for the full environment contract.
 
-| Ablation | Script(s) | Config |
-|---|---|---|
-| Patch size (224/288/384, 3 sizes) | `submit_ablation.sh` → `job_abl_stage{1,2}.sh` | `config_ablation.yaml` |
-| Patch size (full 6-size × 5-fold sweep: 96/160/224/288/384/512) | `submit_cv_ablation.sh` → `job_cv_stage{1,2}_{small,large}.sh` | `config_ablation.yaml` |
-| Aggregation (AMIL vs. majority vote) | *(no separate script)* — every `test_model.py` run reports `amil`, `amil_vote`, `vote` together with paired McNemar tests | any |
-| Training regime (1- vs. 2-stage) | `job_onestage.sh` (1-stage) vs. `job_abl_stage{1,2}.sh` @ patch 224 (2-stage), compiled together by `run_compile_1stage.sh` | `config_ablation.yaml` |
-| Backbone capacity (pico/nano/tiny @ 224) | `prefetch_msize_weights.sh` once, then `submit_msize_pico.sh` / `submit_msize_tiny.sh` (nano reuses the patch-size sweep's 224 run); compiled by `run_compile_msize.sh` | `config_ablation.yaml` |
-| Whole-image baseline | `run_wholeimage.ps1` (train) → `run_wholeimage_test.ps1` (test) → `run_eval_wholeimage.ps1` (per-image eval via `eval_wholeimage.py`) | `config.yaml` |
-| Test-time bag size | `run_bagsize_inference.ps1` — inference-only re-scoring of already-trained models at bag sizes 4..256 | *(reuses trained checkpoints)* |
-| Final/best model | `job_final_model.sh` (single-stage nano @ 512, 5-fold CV), compiled by `compile_final_results.sh` | `config_ablation.yaml` |
+`cluster/job_train.sh` is the single parametrized SLURM array job behind every training
+ablation below — set `PATCH_SIZE`/`MODEL_SIZE`/`STAGES`/etc. via `sbatch --export=...`
+instead of maintaining a separate script per experiment. Its header comments give the
+exact invocation for each row. `cluster/compile_results.py` (wrapped by
+`cluster/run_compile.sh`) recomputes every reported metric — accuracy, macro-F1,
+McNemar, attention concentration, tree-level vote — from each run's per-bag prediction
+rows; it parses any of the run-name conventions below out of the box.
 
-The three `.ps1` "whole-image"/"bag-size" drivers and `eval_wholeimage.py` run **locally**
+| Ablation | How | Compile |
+|---|---|---|
+| Patch size (96/160/224/288/384/512) | `job_train.sh` once per size: `sbatch --export=ALL,PATCH_SIZE=<N> cluster/job_train.sh` | `run_compile.sh` (default pattern) |
+| Aggregation (AMIL vs. majority vote) | *(no separate run)* — every `test_model.py` pass reports `amil`, `amil_vote`, `vote` together with paired McNemar tests | already in each run's `classification_results.xlsx` |
+| Training regime (1- vs. 2-stage) | `job_train.sh` with `STAGES=2` + the single-stage `--set` overrides in its header (no Stage-1 pretraining, uniform LR) vs. the normal 2-stage run at the same patch size | `run_compile.sh` |
+| Backbone capacity (pico/nano/tiny @ 224) | `job_train.sh` with `MODEL_SIZE=pico\|nano\|tiny`, `PATCH_SIZE=224` | `run_compile.sh` |
+| Whole-image baseline | `run_wholeimage.ps1` (train) → `run_wholeimage_test.ps1` (test) → `run_eval_wholeimage.ps1` (per-image eval via `eval_wholeimage.py`) | printed by `run_eval_wholeimage.ps1` itself |
+| Test-time bag size | `run_bagsize_inference.ps1` — inference-only re-scoring of already-trained models at bag sizes 4..256 | printed by the script itself |
+| Final/best model | `job_train.sh`, single-stage nano @ 512 | `run_compile.sh` |
+
+The `.ps1` whole-image/bag-size drivers and `eval_wholeimage.py` run **locally**
 (Windows, no SLURM) against checkpoints already produced on the cluster — they're
 inference/analysis passes, not training jobs.
 
 ### Figures
 
-`notebooks/visualizations.ipynb` regenerates the patch-grid, augmentation-preview,
-training-curve, and confusion-matrix figures from a run's output CSVs and
-`classification_results.xlsx`; `notebooks/*.pdf` are its exported outputs.
+`figures/*.pdf` are the exported attention-map and bag-size-accuracy figures used in the
+paper (attention grid, attention overlay, bag-size accuracy curve). The notebook that
+generated exploratory versions of these plus training curves and confusion matrices is
+not tracked in this repo (see `.gitignore`) — it wasn't part of the final paper pipeline.
 
 ## Leakage-safe splitting and fold generation
 
@@ -146,8 +157,9 @@ It's deterministic from three config values:
 Each class is split independently (`random.Random(f"{seed}:{label}")`), so adding or
 dropping a species doesn't perturb the other classes' assignments. `split_trees()` calls
 `_assert_disjoint()` on every call, which raises immediately if any tree ever ends up in
-two splits — this is a hard runtime guarantee, not just a one-time check. To reproduce
-fold *N* of the 5-fold CV for any config: `--set data.split.n_folds=5 --fold N`.
+two splits — this is a hard runtime guarantee, not just a one-time check.
+`configs/config.yaml` already defaults to `n_folds: 5`; reproduce fold *N* with
+`--fold N` (or the `job_train.sh` array, where `SLURM_ARRAY_TASK_ID` becomes the fold).
 
 ## Known issues
 
@@ -155,18 +167,18 @@ fold *N* of the 5-fold CV for any config: `--set data.split.n_folds=5 --fold N`.
   `batch_training.py` and `scripts/2-1_*.bat`/`3-1_*.bat`, but defines no such flag and
   doesn't branch its search space by stage — it will fail argparse if called that way.
   The tuned hyperparameter values actually used for the paper are already inlined in
-  `configs/config.yaml`/`config_cluster.yaml`/`config_ablation.yaml`, so this doesn't
-  block reproducing results, only re-running the search from scratch.
+  `configs/config.yaml`, so this doesn't block reproducing results, only re-running the
+  search from scratch.
 - **`tests/test_pipeline.py`** expects a synthetic fixture at `/tmp/fake/train` (5
   species × 6 trees × 3 images, with one deliberately oversized 40-patch bag) that no
   script in this repo generates — it isn't runnable as committed. The checks themselves
   (tree-level disjointness, k-fold partitioning, stochastic bag-cap behaviour, Stage-1→
   Stage-2 checkpoint transfer, chunked-inference equivalence) are still useful reading for
   understanding the split/loader invariants even without running them.
-- Several `cluster/*.ps1` / `run_compile*.sh` scripts assume checkpoints and run
-  directories from a specific prior run (e.g. `abl_p224_nano_f*`) already exist on
-  `$SCRATCH` — they're compilation/analysis passes over completed sweeps, not
-  standalone entry points.
+- `cluster/run_wholeimage_test.ps1`, `run_eval_wholeimage.ps1`, `run_bagsize_inference.ps1`,
+  and `run_compile.sh` all assume checkpoints/run directories from a prior training pass
+  already exist (locally or on `$SCRATCH`) — they're inference/compilation passes over
+  completed runs, not standalone entry points.
 
 ## Citation
 
