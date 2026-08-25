@@ -7,7 +7,7 @@
 # difference here is attributable to staging, not to the aux loss. Uniform LR (lr_multiplier
 # =1) is used because there is no pretrained backbone to protect with a lower rate -- this
 # co-varies with staging by necessity and should be stated as such in the paper.
-#SBATCH --account=def-oberman_gpu
+#SBATCH --account=YOUR_ACCOUNT_gpu
 #SBATCH --job-name=bark_1stage
 #SBATCH --array=0-4
 #SBATCH --gres=gpu:1
@@ -20,7 +20,7 @@ set -euo pipefail
 mkdir -p "$SCRATCH/logs"
 
 FOLD=$SLURM_ARRAY_TASK_ID
-export REPO_DIR="$HOME/BarkNet_ML"
+export REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 export CONFIG="$REPO_DIR/configs/config_ablation.yaml"
 PATCH_SIZE=224; MODEL_SIZE=nano; INPUT_SIZE=224
 RUN_NAME="abl_1stage_nano_224_f${FOLD}"

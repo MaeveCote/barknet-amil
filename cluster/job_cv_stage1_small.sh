@@ -3,7 +3,7 @@
 # Small patches produce far more patches/image -> more per-epoch work -> 48h (224 uses the
 # full 24h, so 96/160 get double). 2 sizes x 5 folds = 10 tasks, max 5 concurrent.
 # Do not submit directly; use submit_cv_ablation.sh.
-#SBATCH --account=def-oberman_gpu
+#SBATCH --account=YOUR_ACCOUNT_gpu
 #SBATCH --job-name=bark_cv_s1sm
 #SBATCH --array=0-9%5
 #SBATCH --gres=gpu:1
@@ -19,7 +19,7 @@ SIZES=(96 160)
 PS=${SIZES[$(( SLURM_ARRAY_TASK_ID / 5 ))]}
 FOLD=$(( SLURM_ARRAY_TASK_ID % 5 ))
 
-export REPO_DIR="$HOME/BarkNet_ML"
+export REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 export CONFIG="$REPO_DIR/configs/config_ablation.yaml"
 export PATCH_SIZE=$PS
 export MODEL_SIZE=nano

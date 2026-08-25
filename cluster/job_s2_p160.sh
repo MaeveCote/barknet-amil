@@ -7,7 +7,7 @@
 # each size's completion is visible separately in squeue.
 #
 #   sbatch cluster/job_s2_p160.sh
-#SBATCH --account=def-oberman_gpu
+#SBATCH --account=YOUR_ACCOUNT_gpu
 #SBATCH --job-name=bark_s2_p160
 #SBATCH --array=0-4
 #SBATCH --gres=gpu:1
@@ -21,7 +21,7 @@ mkdir -p "$SCRATCH/logs"
 
 FOLD=$SLURM_ARRAY_TASK_ID          # 0..4, one task per fold
 
-export REPO_DIR="$HOME/BarkNet_ML"
+export REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 export CONFIG="$REPO_DIR/configs/config_ablation.yaml"
 export PATCH_SIZE=160
 export MODEL_SIZE=nano

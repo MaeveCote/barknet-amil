@@ -2,7 +2,7 @@
 # STAGE 1 ONLY -- patch 384, all 5 folds. Pretrains the backbone; Stage 2 is a separate
 # array (job_s2_p384.sh) chained behind this via aftercorr in submit_384.sh.
 # Walltime = measured 40-epoch Stage-1 time + margin, kept short for gpubackfill.
-#SBATCH --account=def-oberman_gpu
+#SBATCH --account=YOUR_ACCOUNT_gpu
 #SBATCH --job-name=bark_s1_p384
 #SBATCH --array=0-4
 #SBATCH --gres=gpu:1
@@ -15,7 +15,7 @@ set -euo pipefail
 mkdir -p "$SCRATCH/logs"
 
 FOLD=$SLURM_ARRAY_TASK_ID
-export REPO_DIR="$HOME/BarkNet_ML"
+export REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 export CONFIG="$REPO_DIR/configs/config_ablation.yaml"
 export PATCH_SIZE=384
 export MODEL_SIZE=nano

@@ -1,7 +1,7 @@
 #!/bin/bash
 # MODEL-SIZE ABLATION -- Stage 2 + test, tiny @ patch 224, 5 folds. Resumes the Stage-1
 # backbone; chained via aftercorr in submit_msize_tiny.sh.
-#SBATCH --account=def-oberman_gpu
+#SBATCH --account=YOUR_ACCOUNT_gpu
 #SBATCH --job-name=bark_s2_tiny224
 #SBATCH --array=0-4
 #SBATCH --gres=gpu:1
@@ -14,7 +14,7 @@ set -euo pipefail
 mkdir -p "$SCRATCH/logs"
 
 FOLD=$SLURM_ARRAY_TASK_ID
-export REPO_DIR="$HOME/BarkNet_ML"
+export REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 export CONFIG="$REPO_DIR/configs/config_ablation.yaml"
 export PATCH_SIZE=224
 export MODEL_SIZE=tiny

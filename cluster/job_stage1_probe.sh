@@ -15,7 +15,7 @@
 # Budget: measured 34.5 min/epoch (nano @ 224, bf16 off). 50 epochs = ~29 h, so this asks
 # for 24 h and relies on early stopping to finish sooner. If it TIMEOUTs, the best backbone
 # is still on $SCRATCH (checkpointed every epoch) and Stage 2 can proceed from it.
-#SBATCH --account=def-oberman_gpu
+#SBATCH --account=YOUR_ACCOUNT_gpu
 #SBATCH --job-name=bark_s1probe
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=12
@@ -27,7 +27,7 @@
 set -euo pipefail
 mkdir -p "$SCRATCH/logs"
 
-export REPO_DIR="$HOME/BarkNet_ML"
+export REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 export CONFIG="$REPO_DIR/configs/config_cluster.yaml"
 export PATCH_SIZE=224
 export MODEL_SIZE=nano

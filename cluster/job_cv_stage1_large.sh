@@ -1,7 +1,7 @@
 #!/bin/bash
 # FULL CV PATCH ABLATION -- STAGE 1, LARGE patches (224, 288, 384, 512). 24h walltime.
 # 4 sizes x 5 folds = 20 tasks, max 5 concurrent. Do not submit directly.
-#SBATCH --account=def-oberman_gpu
+#SBATCH --account=YOUR_ACCOUNT_gpu
 #SBATCH --job-name=bark_cv_s1lg
 #SBATCH --array=0-19%5
 #SBATCH --gres=gpu:1
@@ -17,7 +17,7 @@ SIZES=(224 288 384 512)
 PS=${SIZES[$(( SLURM_ARRAY_TASK_ID / 5 ))]}
 FOLD=$(( SLURM_ARRAY_TASK_ID % 5 ))
 
-export REPO_DIR="$HOME/BarkNet_ML"
+export REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 export CONFIG="$REPO_DIR/configs/config_ablation.yaml"
 export PATCH_SIZE=$PS
 export MODEL_SIZE=nano

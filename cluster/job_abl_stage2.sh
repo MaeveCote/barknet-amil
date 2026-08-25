@@ -5,7 +5,7 @@
 # Reads PS from the array index (same order as Stage 1), resumes
 # $SCRATCH/runs/abl_patch<PS>_nano/pretrain/best_backbone.pth, fine-tunes AMIL (15 epochs),
 # and runs the test (AMIL vs both voting baselines, full + capped bags).
-#SBATCH --account=def-oberman_gpu
+#SBATCH --account=YOUR_ACCOUNT_gpu
 #SBATCH --job-name=bark_abl_s2
 #SBATCH --array=0-2%3
 #SBATCH --gres=gpu:1
@@ -21,7 +21,7 @@ mkdir -p "$SCRATCH/logs"
 PATCH_SIZES=(224 288 384)
 PS=${PATCH_SIZES[$SLURM_ARRAY_TASK_ID]}
 
-export REPO_DIR="$HOME/BarkNet_ML"
+export REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 export CONFIG="$REPO_DIR/configs/config_ablation.yaml"
 export PATCH_SIZE=$PS
 export MODEL_SIZE=nano

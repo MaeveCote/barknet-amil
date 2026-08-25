@@ -21,9 +21,9 @@ exactly the per-image classification we want.
 
 USAGE (local, one fold or all)
     python eval_wholeimage.py \
-        --image-root "G:\path\to\barknet\dataset" \
-        --backbone   "G:\...\runs_wholeimage\wholeimg_f0\pretrain\best_backbone.pth" \
-        --repo-root  "G:\Source\BarkNet_ML\BarkNet_ML" \
+        --image-root "./data/barknet/dataset" \
+        --backbone   "./runs_wholeimage/wholeimg_f0/pretrain/best_backbone.pth" \
+        --repo-root  "." \
         --fold 0 --out fold0_preds.csv
 """
 from __future__ import annotations

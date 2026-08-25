@@ -2,7 +2,7 @@
 # STAGE 2 + TEST -- patch 288, all 5 folds. Resumes the backbone that job_s1_p288.sh
 # produced. Submitted by submit_288.sh with an aftercorr dependency so task N waits on
 # Stage-1 task N (same fold).
-#SBATCH --account=def-oberman_gpu
+#SBATCH --account=YOUR_ACCOUNT_gpu
 #SBATCH --job-name=bark_s2_p288
 #SBATCH --array=0-4
 #SBATCH --gres=gpu:1
@@ -15,7 +15,7 @@ set -euo pipefail
 mkdir -p "$SCRATCH/logs"
 
 FOLD=$SLURM_ARRAY_TASK_ID
-export REPO_DIR="$HOME/BarkNet_ML"
+export REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 export CONFIG="$REPO_DIR/configs/config_ablation.yaml"
 export PATCH_SIZE=288
 export MODEL_SIZE=nano

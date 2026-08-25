@@ -25,9 +25,9 @@
     RESUMABLE: a fold whose test_summary.json exists is skipped.
 #>
 param(
-    [string] $WholeRoot = "G:\Source\BarkNet_ML\runs_wholeimage",
-    [string] $ImageRoot = "G:\data\barknet_raw",
-    [string] $RepoRoot  = "G:\Source\BarkNet_ML\BarkNet_ML",
+    [string] $WholeRoot = ".\runs_wholeimage",
+    [string] $ImageRoot = ".\data\barknet_raw",
+    [string] $RepoRoot  = (Split-Path $PSScriptRoot -Parent),
     [int[]]  $Folds     = @(0, 1, 2, 3, 4),
     [string] $Device    = "cuda:0",
     [int]    $NumWorkers = 5

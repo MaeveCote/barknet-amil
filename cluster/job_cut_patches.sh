@@ -11,9 +11,9 @@
 # The array range is set to match the number of sizes. If you change how many sizes are in
 # PATCH_SIZES, update --array to 0-(count-1).
 #
-# CPU job on def-oberman_cpu -- cutting is CPU-bound and the CPU partition queues far
+# CPU job on YOUR_ACCOUNT_cpu -- cutting is CPU-bound and the CPU partition queues far
 # faster than GPU. Do NOT waste a GPU allocation on this.
-#SBATCH --account=def-oberman_cpu
+#SBATCH --account=YOUR_ACCOUNT_cpu
 #SBATCH --job-name=bark_cut
 #SBATCH --array=0-2%3
 #SBATCH --cpus-per-task=16
@@ -30,7 +30,7 @@ PATCH_SIZES=(96 160 512)
 # ----------------------------------------------------------------------------------
 PS=${PATCH_SIZES[$SLURM_ARRAY_TASK_ID]}
 
-REPO_DIR="$HOME/BarkNet_ML"
+REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 RAW_SRC="$SCRATCH/data/barknet_raw"          # the 23 species dirs live here
 OUT_TAR="$SCRATCH/data/barknet_patches_${PS}.tar"
 
@@ -42,7 +42,7 @@ fi
 
 # Locate the real cut_patches.py rather than assuming a path (past runs broke on a wrong
 # hard-coded path). Prefer src/, fall back to a find.
-CUTTER="$REPO_DIR/src/cut_patches.py"
+CUTTER="$REPO_DIR/src/data_preparation/cut_patches.py"
 [ -f "$CUTTER" ] || CUTTER=$(find "$REPO_DIR" -name cut_patches.py -print -quit)
 [ -n "$CUTTER" ] && [ -f "$CUTTER" ] || { echo "cut_patches.py not found under $REPO_DIR"; exit 1; }
 echo "cutter: $CUTTER"

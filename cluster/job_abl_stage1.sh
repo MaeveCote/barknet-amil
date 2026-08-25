@@ -8,7 +8,7 @@
 # in the ablation config), resized to INPUT_SIZE=224 so field of view is the only variable.
 # ~21h at 31.4 min/epoch; 24h wall gives margin. best_backbone.pth is checkpointed every
 # epoch, so a timeout still leaves a usable backbone.
-#SBATCH --account=def-oberman_gpu
+#SBATCH --account=YOUR_ACCOUNT_gpu
 #SBATCH --job-name=bark_abl_s1
 #SBATCH --array=0-2%3
 #SBATCH --gres=gpu:1
@@ -24,7 +24,7 @@ mkdir -p "$SCRATCH/logs"
 PATCH_SIZES=(224 288 384)
 PS=${PATCH_SIZES[$SLURM_ARRAY_TASK_ID]}
 
-export REPO_DIR="$HOME/BarkNet_ML"
+export REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 # Ablation config: 40 epochs, early stopping disabled.
 export CONFIG="$REPO_DIR/configs/config_ablation.yaml"
 export PATCH_SIZE=$PS

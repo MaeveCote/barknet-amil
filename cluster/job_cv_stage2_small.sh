@@ -3,7 +3,7 @@
 # Mirrors job_cv_stage1_small.sh index-for-index so --dependency=aftercorr pairs each
 # Stage-2 task with its OWN Stage-1 backbone. Resumes the fold-qualified RUN_NAME. Do not
 # submit directly; submit_cv_ablation.sh chains this behind Stage 1.
-#SBATCH --account=def-oberman_gpu
+#SBATCH --account=YOUR_ACCOUNT_gpu
 #SBATCH --job-name=bark_cv_s2sm
 #SBATCH --array=0-9%5
 #SBATCH --gres=gpu:1
@@ -19,7 +19,7 @@ SIZES=(96 160)
 PS=${SIZES[$(( SLURM_ARRAY_TASK_ID / 5 ))]}
 FOLD=$(( SLURM_ARRAY_TASK_ID % 5 ))
 
-export REPO_DIR="$HOME/BarkNet_ML"
+export REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 export CONFIG="$REPO_DIR/configs/config_ablation.yaml"
 export PATCH_SIZE=$PS
 export MODEL_SIZE=nano

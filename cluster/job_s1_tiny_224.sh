@@ -2,7 +2,7 @@
 # MODEL-SIZE ABLATION -- Stage 1, tiny @ patch 224, 5 folds. Uses the SAME 224 patch tar as
 # the patch-size study, so field of view is fixed and BACKBONE CAPACITY is the only variable.
 # Epochs: 22 (tiny converges within this; tiny trimmed to fit the 24h wall).
-#SBATCH --account=def-oberman_gpu
+#SBATCH --account=YOUR_ACCOUNT_gpu
 #SBATCH --job-name=bark_s1_tiny224
 #SBATCH --array=0-4
 #SBATCH --gres=gpu:1
@@ -15,7 +15,7 @@ set -euo pipefail
 mkdir -p "$SCRATCH/logs"
 
 FOLD=$SLURM_ARRAY_TASK_ID
-export REPO_DIR="$HOME/BarkNet_ML"
+export REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 export CONFIG="$REPO_DIR/configs/config_ablation.yaml"
 export PATCH_SIZE=224
 export MODEL_SIZE=tiny

@@ -9,7 +9,7 @@
 # (+0.21 vs +0.10 pp). Change PATCH_SIZE=384 if you prefer that; everything else is identical.
 #
 #   sbatch cluster/job_final_model.sh
-#SBATCH --account=def-oberman_gpu
+#SBATCH --account=YOUR_ACCOUNT_gpu
 #SBATCH --job-name=bark_final
 #SBATCH --array=0-4
 #SBATCH --gres=gpu:1
@@ -28,7 +28,7 @@ MODEL_SIZE=nano
 INPUT_SIZE=224
 EPOCHS=40
 FOLD=$SLURM_ARRAY_TASK_ID
-export REPO_DIR="$HOME/BarkNet_ML"
+export REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 export CONFIG="$REPO_DIR/configs/config_ablation.yaml"
 RUN_NAME="final_${MODEL_SIZE}_p${PATCH_SIZE}_1stage_f${FOLD}"
 OUT="$SCRATCH/runs/$RUN_NAME"

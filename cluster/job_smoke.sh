@@ -8,7 +8,7 @@
 #
 # Note on --time: partitions are tiered, and <= 3h jobs are eligible for the most nodes
 # (plus gpubackfill). Keeping this at 3h is the single biggest lever on queue wait.
-#SBATCH --account=def-oberman_gpu
+#SBATCH --account=YOUR_ACCOUNT_gpu
 #SBATCH --job-name=bark_smoke
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=12
@@ -20,7 +20,7 @@
 set -euo pipefail
 mkdir -p "$SCRATCH/logs"
 
-export REPO_DIR="$HOME/BarkNet_ML"
+export REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 export CONFIG="$REPO_DIR/configs/config_cluster.yaml"
 export PATCH_SIZE=96
 export MODEL_SIZE=nano          # the size the ablation will use

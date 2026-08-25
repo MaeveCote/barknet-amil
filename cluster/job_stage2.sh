@@ -19,7 +19,7 @@
 # never 0.
 #
 # Budget: Stage 2 ~15 epochs x ~22 min ~= 5.5 h + test ~= 6.5 h + staging. 8 h is safe.
-#SBATCH --account=def-oberman_gpu
+#SBATCH --account=YOUR_ACCOUNT_gpu
 #SBATCH --job-name=bark_s2
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=12
@@ -31,7 +31,7 @@
 set -euo pipefail
 mkdir -p "$SCRATCH/logs"
 
-export REPO_DIR="$HOME/BarkNet_ML"
+export REPO_DIR="${REPO_DIR:-$HOME/BarkNet_ML}"
 export CONFIG="$REPO_DIR/configs/config_cluster.yaml"
 
 # These MUST match the backbone being resumed.
