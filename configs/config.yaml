@@ -1,6 +1,12 @@
 # =============================================================================
 # barknet-AMIL — configuration
 # ConvNeXt-V2 backbone + attention-based MIL over within-image bark patches.
+#
+# This is the ONE config used everywhere: local runs, SLURM cluster jobs, and every
+# ablation reported in the paper. Paths below are local-run defaults; cluster jobs
+# override patch_root/output_dir/checkpoint paths on the CLI instead of needing a
+# second copy of this file (see cluster/job_train.sh, cluster/common.sh). Any value
+# here can also be overridden ad hoc with --set a.b.c=value (helper/config_cli.py).
 # =============================================================================
 
 project:
@@ -8,32 +14,45 @@ project:
   seed: 42
   device: cuda:0              # cuda:0 | cpu
 
+  # --- performance --------------------------------------------------------------
+  # Defaults measured on an H100 (nano @ 224, GPU-bound at 93-98% utilisation).
+  perf:
+    amp_dtype: bf16        # bf16 = fp16 speed, wider exponent, no GradScaler needed.
+                            #   Set fp16 on older cards (e.g. RTX 3090) if bf16 underperforms.
+    channels_last: true    # NHWC: convnets reach the tensor cores without a transpose.
+    compile_stage1: false  # torch.compile Stage 1 ONLY (fixed batch shape). Stage 2's
+                            #   bags are [N,C,H,W] with N varying per image, so compiling
+                            #   it would recompile on nearly every batch.
+
 data:
-  patch_root: ./data/barknet_patches/train # Root to the patches train data
+  # Local default (cut with --test-ratio 0, so everything lands under patches_224/train).
+  # On a cluster, override with --patch-root $SLURM_TMPDIR/patches/train.
+  patch_root: ./data/barknet/patches_224/train
   num_workers: 5
   prefetch_factor: 4
 
-  # Runtime tree-level split out of the single patch_root above (no test/ folder needed).
-  #   test_ratio: 0    -> legacy behaviour: train/val only, test comes from test.data_root
-  #   test_ratio: 0.2  -> 20% of the trees per class are held out as test
-  #   n_folds: 5       -> k-fold CV; fold_index selects which fold is the test set
-  #                       (overrides test_ratio when set)
+  # Tree-level, leakage-safe, computed at RUN TIME from the single patch root above --
+  # there is no separate fold-assignment file to ship or regenerate.
+  #   n_folds: 5   -> the paper's leakage-safe 5-fold CV; rotate fold_index 0..4 (or pass
+  #                   --fold N) to reproduce each fold. Overrides test_ratio when set.
+  #   n_folds: null + test_ratio: 0.2 -> a plain single holdout instead of full CV.
   split:
     test_ratio: 0.0
-    n_folds: null
+    n_folds: 5
     fold_index: 0
   val_ratio: 0.15  # fraction of the NON-test trees held out for validation
-  max_patches_per_bag: 128  # keep equal to the value the Stage-2 search used
 
-  # The 23 barknet 1.0 species codes (folder names). Trim to the classes you
-  # actually train on; (ERB, PEG, PID) were dropped in the original barknet paper.
+  # Cap used by the Stage-2 search AND by Stage-2 training -- keep them equal, or the
+  # hyperparameters were found on a different bag-size distribution than they are used on.
+  max_patches_per_bag: 128
+
+  # The 20 BarkNet 1.0 species codes actually trained on (ERB, PEG, PID were dropped,
+  # matching the original BarkNet paper).
   species:
     [BOJ, BOP, CHR, EPB, EPN, EPO, EPR, ERR, ERS, FRA, HEG,
      MEL, ORA, OSV, PET, PIB, PIR, PRU, SAB, THO]
-  #    [BOJ, BOP, CHR, EPB, EPN, EPO, EPR, ERB, ERR, ERS, FRA, HEG,
-  #     MEL, ORA, OSV, PEG, PET, PIB, PID, PIR, PRU, SAB, THO]
 
-  # How to parse ids from a patch filename, e.g. "<tree>_<image>_<patch>.png".
+  # How to parse ids from a patch filename, e.g. "<tree>_<image>_<patch>.jpg".
   # tree_id_index drives the leakage-safe split; image_id_index defines the bag.
   filename:
     delimiter: "_"
@@ -44,51 +63,58 @@ model:
   size: nano # atto | femto | pico | nano | tiny | base  (there is no convnextv2_small)
   weights: default # default (ImageNet-pretrained) | none (from scratch)
   pretrained_checkpoint: null # optional .pth to resume a full AMIL model
-  # Stage-1 backbone used to initialise Stage-2 (set null to skip two-stage training).
+  # Stage-1 backbone used to initialise Stage-2 (set null to skip two-stage training --
+  # the single-stage control ablation).
   backbone_checkpoint: ./runs/pretrain/best_backbone.pth
-  attn_dropout: 0.1
-  class_dropout: 0.4
-  drop_path_rate: 0.2
+  # Optional: ImageNet weight file on disk, for compute nodes with no internet.
+  # Leave null to resolve through the (pre-warmed) Hugging Face cache.
+  pretrained_file: null
+  attn_dropout: 0.1         # fallback; Stage 2 overrides below
+  class_dropout: 0.4        # fallback; both stages override below
+  drop_path_rate: 0.25703944838962833   # from the Stage-1 Optuna search (pico @ 224)
   label_smoothing: 0.1 # 0 disables
 
 # Stage 1: patch-level backbone pretraining (per-patch classifier).
+# Tuned values below come from the local Optuna search (pico @ 224, best val loss 1.2340).
 pretrain:
-  optimal_params: null      # tuned values inlined below (the tune YAML doesn't exist locally)
+  optimal_params: null      # path to an optimal_params_*.yaml from hyperparameter_tuning.py
   epochs: 40
-  batch_size: 128           # tuned Pico@224 value
+  batch_size: 128
   warmup_ratio: 0.16
-  base_lr: 1.0062785194709649e-4   # tuned Pico@224 (Stage-1 / from-ImageNet rate)
+  base_lr: 1.0062785194709649e-4
   weight_decay: 1.031294766456457e-3
   class_dropout: 0.11410614649915582
   drop_path_rate: 0.25703944838962833
-  min_epochs: 15            # early-stopping floor (must clear warmup)
+  min_epochs: 15            # early-stopping floor -- must clear the warmup
   early_stopping_patience: 10
   # val_loss | val_acc -- they disagree on this dataset (label smoothing pushes val loss
-  # up while val acc still climbs). Pick one and use it for every fold.
+  # up while val acc still climbs). Pick one and use it for every fold. The paper's
+  # ablation runs disable early stopping entirely instead (--set pretrain.early_stopping_
+  # patience=999 --set pretrain.min_epochs=999) to train the full cosine schedule --
+  # see cluster/job_train.sh's header for the exact invocation.
   checkpoint_metric: val_acc
   resume: false # resume from best_backbone.pth in output_dir
   output_dir: ./runs/pretrain
 
 # Stage 2: image-level AMIL fine-tuning (loads the Stage-1 backbone).
+# Tuned values below come from the local Optuna search (pico @ 224, best val loss 0.8346;
+# trials were tightly clustered 0.834-0.864, so treat these as a region, not a point).
 train:
   epochs: 15
   warmup_ratio: 0.2
-  accumulation_steps: 32          # tuned Stage-2 value
+  accumulation_steps: 32
   instance_loss_weight: 0.6412880283086111
   attn_dropout: 0.41876045365913256
   class_dropout: 0.20525668127122992
-  base_lr: 1.0337768182267276e-5  # tuned Stage-2 (fine-tune-an-existing-backbone rate)
-  weight_decay: 6.418189515676058e-4
-  lr_multiplier: 15
   min_epochs: 5
   early_stopping_patience: 5
   save_epoch_states: false
   output_dir: ./runs/train
-  optimal_params: null            # tuned values inlined above
+  optimal_params: null            # path to an optimal_params_*.yaml; overrides everything below
   optimizer:
-    base_lr: null
-    weight_decay: null
-    lr_multiplier: null
+    base_lr: 1.0337768182267276e-5  # tuned Stage-2 (fine-tune-an-existing-backbone rate)
+    weight_decay: 6.418189515676058e-4
+    lr_multiplier: 15
 
 tune:
   stage: board # pretrain | board — which one runs when no --stage flag is given
@@ -109,10 +135,9 @@ tune:
 
 test:
   checkpoint: ./runs/train/best_model.pth
-  # Legacy pre-cut test folder. Set to null to use the runtime data.split holdout instead.
-  data_root: ./data/barknet_patches/test
+  data_root: null # null = use the runtime data.split holdout above (no separate test/ folder needed)
   chunk_size: 64            # patches per forward chunk at inference (bounds peak VRAM)
-  max_patches_per_bag: null # null = evaluate on the FULL bag
+  max_patches_per_bag: null # null = evaluate on the FULL bag (the honest number)
   output_dir: ./runs/test
 
 augmentation:
@@ -138,6 +163,6 @@ augmentation:
     scale: [0.02, 0.06]
     count: 2
   normalize:
-    # Statistics computed on the BarkNet 1.0 patches.
+    # Statistics computed on the BarkNet 1.0 patches (src/data_preparation/compute_dataset_stats.py).
     mean:  [0.4873, 0.4891, 0.4457]
     std: [0.1988, 0.1965, 0.2132]
