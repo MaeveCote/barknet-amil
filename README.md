@@ -151,6 +151,4 @@ two splits — this is a hard runtime guarantee, not just a one-time check.
 
 ## Citation
 
-```
 [arXiv link](https://arxiv.org/abs/2611.05680)
-```
