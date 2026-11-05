@@ -150,5 +150,6 @@ two splits — this is a hard runtime guarantee, not just a one-time check.
 [MIT](LICENSE).
 
 ## Citation
-
-[arXiv link](https://arxiv.org/abs/2611.05680)
+```
+Maeve Côté. "Toward an Optimal Configuration for Tree Species Classification from Bark Images: A Leakage-Safe Ablation Study." arXiv preprint arXiv:2611.05680 (2026).
+```
