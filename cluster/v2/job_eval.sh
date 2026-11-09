@@ -11,7 +11,7 @@
 #SBATCH --job-name=bark_v2_eval
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=12
-#SBATCH --mem=64G
+#SBATCH --mem=96G   # 64G OOMs at 160 px (mean ~347 patches/bag, upscaled to 224, 11 workers x 4 prefetched bags); 96G = what the paper's 160 px test ran in
 #SBATCH --time=4:00:00
 #SBATCH --output=/scratch/%u/logs/%x-%A_%a.out
 #SBATCH --error=/scratch/%u/logs/%x-%A_%a.out
