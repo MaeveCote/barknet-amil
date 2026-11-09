@@ -15,6 +15,12 @@ Stage-1 backbone, so a win could just mean "trained longer". `amil` vs `amil_vot
 weights fixed and varies only the aggregation rule, which is the claim the paper makes.
 Both comparisons are reported, each with a paired McNemar test.
 
+v2 adds three inference-only baselines from the SAME forward passes (no extra training):
+``amil_uniform`` (alpha_i = 1/N: mean patch embedding -> the trained head), ``amil_soft``
+and ``vote_soft`` (argmax of the mean per-patch softmax over the Stage-2 / Stage-1 patch
+heads), plus per-patch test accuracy for both heads. The original three predictors are
+computed exactly as before.
+
 BAG SIZE. Training caps bags at ``data.max_patches_per_bag`` (resampled every epoch); test
 bags are much larger (median ~144, max 336 at 224px). Two evaluations are run:
 
@@ -51,6 +57,19 @@ PREDICTORS = [
     ("amil", "attention pooling (Stage-2)"),
     ("amil_vote", "majority vote over Stage-2's OWN patch head"),
     ("vote", "majority vote over the Stage-1 backbone"),
+    # v2 aggregation baselines -- inference only, same weights and forward pass:
+    ("amil_uniform", "uniform attention (alpha=1/N, mean embedding) through Stage-2's head"),
+    ("amil_soft", "soft vote (argmax of mean softmax) over Stage-2's patch head"),
+    ("vote_soft", "soft vote (argmax of mean softmax) over the Stage-1 backbone"),
+]
+
+# Paired comparisons reported with McNemar: (a, b, why).
+COMPARISONS = [
+    ("amil", "amil_vote", "MECHANISM: same weights, attention vs voting"),
+    ("amil", "vote", "PIPELINE: AMIL vs prior-work Stage-1 + vote"),
+    ("amil", "amil_uniform", "LEARNED vs UNIFORM attention, same weights"),
+    ("amil", "amil_soft", "attention vs soft vote, same weights"),
+    ("amil", "vote_soft", "AMIL vs Stage-1 + soft vote"),
 ]
 
 
@@ -86,6 +105,18 @@ def majority_vote(patch_logits, species):
     return species[top[0]], top[1] / max(len(preds), 1)
 
 
+def soft_vote(patch_logits, species):
+    """Soft vote: argmax of the mean per-patch softmax. Returns (class, mean prob of it)."""
+    mean_prob = torch.softmax(patch_logits.float(), dim=1).mean(dim=0)
+    k = int(mean_prob.argmax().item())
+    return species[k], float(mean_prob[k].item())
+
+
+def patch_correct(patch_logits, label):
+    """How many patches of the bag are individually classified correctly."""
+    return int((patch_logits.argmax(dim=1) == int(label)).sum().item())
+
+
 def evaluate(cfg, species, amil_model, vote_model, chunk_size, device, seed, cap, tag):
     """Score every available predictor over one bag distribution (capped or uncapped)."""
     cfg = {**cfg, "test": {**cfg["test"], "max_patches_per_bag": cap}}
@@ -95,17 +126,21 @@ def evaluate(cfg, species, amil_model, vote_model, chunk_size, device, seed, cap
     with torch.no_grad():
         for patches, true_label, image_id in tqdm(loader, desc=f"Testing [{tag}]"):
             patches = patches.squeeze(0).to(device)
+            label = int(true_label.item())
             entry = {
                 "image_id": image_id[0],
-                "true_class": species[int(true_label.item())],
+                # "<SPECIES>:<tree>:<image>" -- unique across species (tree ids are not)
+                "image_key": f"{species[label]}:{image_id[0]}",
+                "true_class": species[label],
                 "n_patches": int(patches.size(0)),
             }
 
             if amil_model is not None:
-                # ONE forward pass gives both the attention-pooled image logits and the
-                # per-patch logits from the auxiliary head, so `amil` and `amil_vote` are
-                # strictly the same weights on the same activations.
-                image_logits, patch_logits, attn = amil_model.infer(patches, chunk_size=chunk_size)
+                # ONE forward pass gives the attention-pooled image logits, the per-patch
+                # logits from the auxiliary head and the uniform-attention logits, so every
+                # amil_* predictor is strictly the same weights on the same activations.
+                image_logits, patch_logits, attn, uniform_logits = amil_model.infer_with_uniform(
+                    patches, chunk_size=chunk_size)
 
                 probs = torch.softmax(image_logits.float(), dim=1).cpu().numpy()[0]
                 pred = int(np.argmax(probs))
@@ -121,9 +156,17 @@ def evaluate(cfg, species, amil_model, vote_model, chunk_size, device, seed, cap
                 entry["amil_vote_pred"], entry["amil_vote_share"] = majority_vote(
                     patch_logits, species)
 
+                uprobs = torch.softmax(uniform_logits.float(), dim=1).cpu().numpy()[0]
+                entry["amil_uniform_pred"] = species[int(np.argmax(uprobs))]
+                entry["amil_uniform_conf"] = float(uprobs.max())
+                entry["amil_soft_pred"], entry["amil_soft_conf"] = soft_vote(patch_logits, species)
+                entry["amil_patch_correct"] = patch_correct(patch_logits, label)
+
             if vote_model is not None:
                 logits = vote_model.infer(patches, chunk_size=chunk_size)
                 entry["vote_pred"], entry["vote_share"] = majority_vote(logits, species)
+                entry["vote_soft_pred"], entry["vote_soft_conf"] = soft_vote(logits, species)
+                entry["vote_patch_correct"] = patch_correct(logits, label)
 
             rows.append(entry)
 
@@ -230,13 +273,18 @@ def main():
         if "amil_attn_entropy" in df.columns:
             block["mean_attn_entropy"] = float(df["amil_attn_entropy"].mean())
 
+        # Per-patch TEST accuracy (pooled over every patch of every test bag).
+        for name in ("vote", "amil"):
+            col = f"{name}_patch_correct"
+            if col in df.columns:
+                block[f"{name}_patch_accuracy"] = float(df[col].sum() / max(df["n_patches"].sum(), 1))
+                print(f"  {name + '_patch':<10} {block[f'{name}_patch_accuracy']:.4f}   "
+                      f"(per-patch test accuracy)")
+
         correct = {n: (df[f"{n}_pred"] == df["true_class"]).tolist()
                    for n, _ in PREDICTORS if f"{n}_pred" in df.columns}
 
-        for a, b, why in (
-            ("amil", "amil_vote", "MECHANISM: same weights, attention vs voting"),
-            ("amil", "vote", "PIPELINE: AMIL vs prior-work Stage-1 + vote"),
-        ):
+        for a, b, why in COMPARISONS:
             if a in correct and b in correct:
                 delta = block[f"{a}_accuracy"] - block[f"{b}_accuracy"]
                 mc = mcnemar(correct[a], correct[b])

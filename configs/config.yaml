@@ -40,6 +40,11 @@ data:
     test_ratio: 0.0
     n_folds: 5
     fold_index: 0
+    # tree (the paper: leakage-safe) | image (v2 leakage experiment ONLY -- deliberately
+    # puts images of one tree on both sides; needs fold_file from
+    # src/data_preparation/make_image_folds.py, see cluster/v2/README.md)
+    unit: tree
+    fold_file: null
   val_ratio: 0.15  # fraction of the NON-test trees held out for validation
 
   # Cap used by the Stage-2 search AND by Stage-2 training -- keep them equal, or the
@@ -85,13 +90,15 @@ pretrain:
   weight_decay: 1.031294766456457e-3
   class_dropout: 0.11410614649915582
   drop_path_rate: 0.25703944838962833
-  min_epochs: 15            # early-stopping floor -- must clear the warmup
-  early_stopping_patience: 10
+  # Early stopping DISABLED, as in every paper run: patience > epochs means it can never
+  # fire, so each run trains the full cosine schedule (best_backbone.pth is still
+  # checkpointed on checkpoint_metric every epoch). For a quick local run you can re-enable
+  # it, e.g. --set pretrain.early_stopping_patience=10 --set pretrain.min_epochs=15
+  # (min_epochs must clear the warmup).
+  min_epochs: 999
+  early_stopping_patience: 999
   # val_loss | val_acc -- they disagree on this dataset (label smoothing pushes val loss
-  # up while val acc still climbs). Pick one and use it for every fold. The paper's
-  # ablation runs disable early stopping entirely instead (--set pretrain.early_stopping_
-  # patience=999 --set pretrain.min_epochs=999) to train the full cosine schedule --
-  # see cluster/job_train.sh's header for the exact invocation.
+  # up while val acc still climbs). Pick one and use it for every fold.
   checkpoint_metric: val_acc
   resume: false # resume from best_backbone.pth in output_dir
   output_dir: ./runs/pretrain
@@ -148,7 +155,7 @@ augmentation:
   vertical_flip: 0.5
   rotation:
     prob: 0.5
-    degrees: 15
+    degrees: 30               # value used for every run in the paper
   color_jitter:
     prob: 0.5
     brightness: 0.3

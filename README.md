@@ -106,22 +106,32 @@ allocation (or override at submit time: `sbatch --account=<you> cluster/job_x.sh
 internet). See `cluster/common.sh` for the full environment contract.
 
 `cluster/job_train.sh` is the single parametrized SLURM array job behind every training
-ablation below — set `PATCH_SIZE`/`MODEL_SIZE`/`STAGES`/etc. via `sbatch --export=...`
-instead of maintaining a separate script per experiment. Its header comments give the
-exact invocation for each row. `cluster/compile_results.py` (wrapped by
+ablation below — set `PATCH_SIZE`/`MODEL_SIZE`/`STAGES`/`SINGLE_STAGE`/`RUN_PREFIX`/etc.
+via `sbatch --export=...` instead of maintaining a separate script per experiment. Its
+header comments give the exact invocation for each row, with the settings the paper's
+runs used (`configs/config.yaml` already carries the paper's hyperparameters, so most rows
+need no `--set` overrides). `cluster/compile_results.py` (wrapped by
 `cluster/run_compile.sh`) recomputes every reported metric — accuracy, macro-F1,
 McNemar, attention concentration, tree-level vote — from each run's per-bag prediction
-rows; it parses any of the run-name conventions below out of the box.
+rows; it recognises the run-name prefixes below (set with `RUN_PREFIX`), and silently
+skips any other name.
 
-| Ablation | How | Compile |
+| Ablation | How (`job_train.sh` knobs) | Run prefix → compile |
 |---|---|---|
-| Patch size (96/160/224/288/384/512) | `job_train.sh` once per size: `sbatch --export=ALL,PATCH_SIZE=<N> cluster/job_train.sh` | `run_compile.sh` (default pattern) |
+| Patch size (160/224/288/384/512) | `PATCH_SIZE=<N>` | `abl_p<N>_nano` → `run_compile.sh` (default pattern) |
 | Aggregation (AMIL vs. majority vote) | *(no separate run)* — every `test_model.py` pass reports `amil`, `amil_vote`, `vote` together with paired McNemar tests | already in each run's `classification_results.xlsx` |
-| Training regime (1- vs. 2-stage) | `job_train.sh` with `STAGES=2` + the single-stage `--set` overrides in its header (no Stage-1 pretraining, uniform LR) vs. the normal 2-stage run at the same patch size | `run_compile.sh` |
-| Backbone capacity (pico/nano/tiny @ 224) | `job_train.sh` with `MODEL_SIZE=pico\|nano\|tiny`, `PATCH_SIZE=224` | `run_compile.sh` |
+| Training regime (1- vs. 2-stage) | `SINGLE_STAGE=1`, `PATCH_SIZE=224` (no Stage-1 pretraining, 40 epochs from ImageNet) vs. the normal 2-stage run at the same patch size | `abl_1stage_nano_224` → `PATTERN='abl_1stage_*_f*'` |
+| Backbone capacity (pico/nano/tiny @ 224) | `MODEL_SIZE=pico\|tiny`, `PATCH_SIZE=224`, Stage-1 drop-path 0.15 / 0.35 via `EXTRA_ARGS` (see header) | `abl_msize_<size>_224` → `PATTERN='abl_msize_*_f*'` |
 | Whole-image baseline | `run_wholeimage.ps1` (train) → `run_wholeimage_test.ps1` (test) → `run_eval_wholeimage.ps1` (per-image eval via `eval_wholeimage.py`) | printed by `run_eval_wholeimage.ps1` itself |
 | Test-time bag size | `run_bagsize_inference.ps1` — inference-only re-scoring of already-trained models at bag sizes 4..256 | printed by the script itself |
-| Final/best model | `job_train.sh`, single-stage nano @ 512 | `run_compile.sh` |
+| Final/best model | `SINGLE_STAGE=1`, `PATCH_SIZE=512` | `final_nano_p512_1stage` → `PATTERN='final_*_f*'` |
+
+**v2 experiments** (image-level split, and soft-vote / uniform-attention baselines re-scored
+on the tree-level checkpoints) have their own runbook: [`cluster/v2/README.md`](cluster/v2/README.md).
+
+The single-stage runs use the config's Stage-2 optimiser settings unchanged (base LR
+1.0e-5, ×15 on the attention/classifier heads); see the `SINGLE_STAGE` block in
+`cluster/run_chain.sh`.
 
 The `.ps1` whole-image/bag-size drivers and `eval_wholeimage.py` run **locally**
 (Windows, no SLURM) against checkpoints already produced on the cluster — they're

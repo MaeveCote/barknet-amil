@@ -84,7 +84,14 @@ def main():
     ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--out", default=None, help="per-image predictions CSV")
+    ap.add_argument("--split", choices=["tree", "image"], default="tree",
+                    help="tree = the paper's leakage-safe folds (default, unchanged); image = "
+                         "the v2 image-level folds read from --fold-file")
+    ap.add_argument("--fold-file", default=None,
+                    help="image_folds.csv from src/data_preparation/make_image_folds.py")
     args = ap.parse_args()
+    if args.split == "image" and not args.fold_file:
+        ap.error("--split image needs --fold-file")
 
     repo = Path(args.repo_root)
     cfg_path = Path(args.config) if args.config else repo / "configs" / "config.yaml"
@@ -114,18 +121,32 @@ def main():
     fcfg = cfg["data"]["filename"]
     # split_trees returns bags grouped tree->image->[patches]; we only need which files are
     # in the TEST split. Re-scan and select the test trees, then take every file individually.
-    splits = dl.split_trees(
-        args.image_root, species, fcfg,
-        val_ratio=cfg["data"]["split"].get("val_ratio", 0.15),
-        test_ratio=cfg["data"]["split"]["test_ratio"],
-        seed=args.seed,
-        n_folds=args.n_folds,
-        fold_index=args.fold,
-    )
+    id_of = {}   # (species, file name) -> (image_id, tree_id); image split only
+    if args.split == "image":
+        from helper import image_folds  # noqa: E402  (src/ is on sys.path by now)
+        splits = dl.split_images(
+            args.image_root, species, {**fcfg, "layout": "raw"},
+            fold_file=args.fold_file,
+            val_ratio=cfg["data"].get("val_ratio", 0.15),
+            seed=args.seed,
+            fold_index=args.fold,
+        )
+        id_of = {(r["species"], r["src_image"]): (r["image_id"], r["tree_id"])
+                 for r in image_folds.read_fold_file(args.fold_file)}
+    else:
+        splits = dl.split_trees(
+            args.image_root, species, fcfg,
+            val_ratio=cfg["data"]["split"].get("val_ratio", 0.15),
+            test_ratio=cfg["data"]["split"]["test_ratio"],
+            seed=args.seed,
+            n_folds=args.n_folds,
+            fold_index=args.fold,
+        )
     test_bags = splits["test"]
     # each bag is a list of (path, label); flatten to individual (path, label) images
     images = [(p, label) for bag in test_bags for (p, label) in bag]
-    print(f"fold {args.fold}: {len(test_bags)} test trees -> {len(images)} whole images")
+    print(f"fold {args.fold} [{args.split}-level]: {len(test_bags)} test bags -> "
+          f"{len(images)} whole images")
 
     if not images:
         print("No test images -- check image_root and split settings.")
@@ -164,8 +185,12 @@ def main():
             true_sp = species[label]
             ok = int(pr) == int(label)
             correct += ok
-            rows.append({"image": path.name, "true_class": true_sp,
-                         "pred_class": pred_sp, "correct": ok})
+            row = {"image": path.name, "true_class": true_sp,
+                   "pred_class": pred_sp, "correct": ok}
+            if id_of:
+                iid, tree = id_of[(true_sp, path.name)]
+                row.update({"image_id": iid, "tree_id": tree, "fold": args.fold})
+            rows.append(row)
         batch_imgs.clear(); batch_meta.clear()
 
     for i, (path, label) in enumerate(images, 1):
@@ -200,7 +225,10 @@ def main():
 
     out = Path(args.out) if args.out else Path(f"wholeimage_fold{args.fold}_preds.csv")
     with open(out, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["image", "true_class", "pred_class", "correct"])
+        cols = ["image", "true_class", "pred_class", "correct"]
+        if id_of:
+            cols += ["image_id", "tree_id", "fold"]
+        w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader(); w.writerows(rows)
     # a one-line summary sidecar for easy aggregation
     with open(out.with_suffix(".summary.csv"), "w", newline="") as f:

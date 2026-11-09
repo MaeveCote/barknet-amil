@@ -32,6 +32,7 @@ out the test trees here. Two modes:
 Legacy mode still works: point ``test.data_root`` at a separate pre-cut patch tree and
 that whole directory is used as the test set (see ``build_test_loader``).
 """
+import csv
 import random
 import zlib
 from collections import defaultdict
@@ -43,6 +44,8 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
+
+from helper import image_folds
 
 # One OpenCV thread per process. Each DataLoader worker is a process; letting OpenCV
 # also spawn a thread pool inside each one oversubscribes the CPUs allocated by SLURM and
@@ -147,10 +150,21 @@ def _parse_ids(filename: str, fcfg: Dict) -> Tuple[str, str]:
 
 
 def _scan(patch_root: str, species: List[str], fcfg: Dict):
-    """Walk ``patch_root`` once and group patches tree -> image -> [(path, label)]."""
+    """Walk ``patch_root`` once and group patches tree -> image -> [(path, label)].
+
+    ``data.filename.layout``: ``patch`` (default) reads the image id from the filename
+    token ``image_id_index``. ``raw`` is for the ORIGINAL BarkNet photos
+    (``<tree>_<class>_..._<crop>.jpg``), which carry no image token: each photo becomes
+    its own one-instance bag, numbered exactly like cut_patches.py numbers ``imageUID``
+    (see helper/image_folds.py), so ids line up with the patch pipeline's.
+    """
     root = Path(patch_root)
     if not root.exists():
         raise FileNotFoundError(f"data.patch_root does not exist: {root}")
+
+    layout = str(fcfg.get("layout", "patch")).lower()
+    if layout not in ("patch", "raw"):
+        raise ValueError(f"data.filename.layout must be 'patch' or 'raw', got {layout!r}")
 
     class_to_idx = {name: i for i, name in enumerate(species)}
     trees: Dict[str, Dict[str, Bag]] = defaultdict(lambda: defaultdict(list))
@@ -164,10 +178,16 @@ def _scan(patch_root: str, species: List[str], fcfg: Dict):
             print(f"Warning: missing class directory {cls_dir}")
             continue
         label = class_to_idx[name]
-        for path in sorted(cls_dir.rglob("*")):
-            if path.suffix.lower() not in IMAGE_EXTENSIONS:
-                continue
-            tree, image = _parse_ids(path.name, fcfg)
+        files = [p for p in sorted(cls_dir.rglob("*")) if p.suffix.lower() in IMAGE_EXTENSIONS]
+        raw_uid = None
+        if layout == "raw":
+            files = [p for p in files if image_folds.is_raw_name(p)]
+            raw_uid = image_folds.assign_raw_uids(files)
+        for path in files:
+            if raw_uid is not None:
+                tree, image = path.stem.split("_")[0], raw_uid[path]
+            else:
+                tree, image = _parse_ids(path.name, fcfg)
             # Namespace by label so identical raw ids across species never collide.
             tree_key = f"{label}:{tree}"
             image_key = f"{label}:{tree}:{image}"
@@ -292,6 +312,87 @@ def _assert_disjoint(splits: Dict[str, List[Bag]], fcfg: Dict) -> None:
             )
 
 
+def _check_against_patch_index(root: Path, by_id: Dict[str, Bag], src_of: Dict[str, str],
+                               species: List[str]) -> None:
+    """If the patch root ships cut_patches.py's patch_index.csv, prove that every bag's
+    ``<species>:<tree>:<uid>`` id names the same source photo as the fold file does."""
+    index = root / "patch_index.csv"
+    if not index.exists():
+        print(f"  (no {index.name} under {root}; id/source-photo cross-check skipped)")
+        return
+    wanted = set(species)
+    seen: Dict[str, str] = {}
+    with open(index, newline="") as f:
+        for r in csv.DictReader(f):
+            if r["species"] in wanted:
+                seen.setdefault(image_folds.image_id(r["species"], r["tree_id"], r["image_uid"]),
+                                r["src_image"])
+    bad = [i for i in by_id if seen.get(i) != src_of.get(i)]
+    if bad:
+        raise AssertionError(
+            f"{len(bad)} image id(s) map to a different source photo in {index} than in the "
+            f"fold file, e.g. {bad[:3]} -> {[(seen.get(i), src_of.get(i)) for i in bad[:3]]}")
+    print(f"  id/source-photo cross-check vs {index.name}: {len(by_id)} images OK")
+
+
+def split_images(
+        patch_root: str,
+        species: List[str],
+        fcfg: Dict,
+        fold_file: str,
+        val_ratio: float,
+        seed: int = 42,
+        fold_index: int = 0,
+        verbose: bool = True,
+) -> Dict[str, List[Bag]]:
+    """IMAGE-level train/val/test split (v2 leakage experiment -- NOT leakage-safe).
+
+    Fold membership comes from ``fold_file`` (src/data_preparation/make_image_folds.py);
+    the inner val split is image-level too (see helper/image_folds.partition). Tree ids
+    are ignored, so a tree's images straddle the split by design; disjointness is enforced
+    on IMAGES instead, and the tree overlap is reported rather than forbidden.
+    """
+    trees, _ = _scan(patch_root, species, fcfg)
+    by_id: Dict[str, Bag] = {}
+    for tree_imgs in trees.values():
+        for key, bag in tree_imgs.items():
+            label, tree, uid = key.split(":")
+            by_id[image_folds.image_id(species[int(label)], tree, uid)] = bag
+
+    rows = image_folds.read_fold_file(fold_file)
+    src_of = {r["image_id"]: r["src_image"] for r in rows}
+    unknown = sorted(set(by_id) - set(src_of))
+    if unknown:
+        raise ValueError(f"{len(unknown)} image(s) under {patch_root} are not in the fold "
+                         f"file {fold_file}, e.g. {unknown[:5]}")
+    if str(fcfg.get("layout", "patch")).lower() == "raw":
+        bad = [i for i, bag in by_id.items() if bag[0][0].name != src_of[i]]
+        if bad:
+            raise AssertionError(f"raw image ids disagree with the fold file, e.g. {bad[:3]}")
+    else:
+        _check_against_patch_index(Path(patch_root), by_id, src_of, species)
+
+    parts = image_folds.partition(rows, int(fold_index), val_ratio, seed)
+    splits = {name: [by_id[i] for i in sorted(parts[name]) if i in by_id] for name in SPLIT_NAMES}
+    for a, b in (("train", "val"), ("train", "test"), ("val", "test")):
+        if parts[a] & parts[b]:
+            raise AssertionError(f"IMAGE LEAKAGE: images in both '{a}' and '{b}'")
+
+    if verbose:
+        rep = image_folds.leakage_report(rows, parts)
+        missing = len(src_of) - len(by_id)
+        print(f"IMAGE-level split [fold={fold_index}, val_ratio={val_ratio}, seed={seed}, "
+              f"fold_file={fold_file}] -- tree ids IGNORED (not leakage-safe):")
+        for name in SPLIT_NAMES:
+            n_pat = sum(len(b) for b in splits[name])
+            print(f"  {name:<5} {len(splits[name]):>6} images | {n_pat:>9} patches")
+        if missing:
+            print(f"  note: {missing} fold-file image(s) have no files under {patch_root}")
+        print(f"  test images whose tree is also in train: "
+              f"{100 * rep['test_images_tree_in_train']:.2f}%")
+    return splits
+
+
 def split_config(cfg: Dict) -> Dict:
     """Read the ``data.split`` block, with backwards-compatible defaults."""
     data_cfg = cfg["data"]
@@ -301,6 +402,9 @@ def split_config(cfg: Dict) -> Dict:
         "test_ratio": float(sp.get("test_ratio") or 0.0),
         "n_folds": sp.get("n_folds"),
         "fold_index": int(sp.get("fold_index") or 0),
+        # tree (default, the paper) | image (v2 leakage experiment, needs fold_file)
+        "unit": str(sp.get("unit") or "tree").lower(),
+        "fold_file": sp.get("fold_file"),
     }
 
 
@@ -308,6 +412,21 @@ def get_splits(cfg: Dict, seed: int = 42, patch_root: Optional[str] = None) -> D
     """All three splits, driven by the config (single source of truth)."""
     data_cfg = cfg["data"]
     sc = split_config(cfg)
+    if sc["unit"] == "image":
+        if not sc["fold_file"]:
+            raise ValueError("data.split.unit=image needs data.split.fold_file "
+                             "(see src/data_preparation/make_image_folds.py).")
+        return split_images(
+            patch_root=patch_root or data_cfg["patch_root"],
+            species=data_cfg["species"],
+            fcfg=data_cfg.get("filename", {}),
+            fold_file=sc["fold_file"],
+            val_ratio=sc["val_ratio"],
+            seed=seed,
+            fold_index=sc["fold_index"],
+        )
+    if sc["unit"] != "tree":
+        raise ValueError(f"data.split.unit must be 'tree' or 'image', got {sc['unit']!r}")
     return split_trees(
         patch_root=patch_root or data_cfg["patch_root"],
         species=data_cfg["species"],

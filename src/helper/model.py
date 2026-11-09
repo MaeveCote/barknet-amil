@@ -94,6 +94,26 @@ class PatchAttentionMIL(nn.Module):
         features = self._features_chunked(x, chunk_size)
         return F.softmax(self.attention(features), dim=0)
 
+    @torch.no_grad()
+    def infer_with_uniform(self, x: torch.Tensor, chunk_size: int = 64):
+        """:meth:`infer` plus the UNIFORM-attention baseline from the same forward pass.
+
+        Uniform attention fixes alpha_i = 1/N, so the bag embedding is the plain mean of
+        the patch embeddings, fed through the same trained head. Everything else is
+        bit-for-bit what :meth:`infer` computes.
+
+        Returns ``(image_logits [1, C], patch_logits [N, C], attn [N, 1],
+        uniform_logits [1, C])``.
+        """
+        features = self._features_chunked(x, chunk_size)          # [N, F]
+        patch_logits = self.classifier(self.dropout(features))     # [N, C]
+        attn = F.softmax(self.attention(features), dim=0)          # [N, 1]
+        pooled = torch.sum(attn * features, dim=0, keepdim=True)   # [1, F]
+        image_logits = self.classifier(self.dropout(pooled))       # [1, C]
+        uniform = features.mean(dim=0, keepdim=True)               # [1, F]
+        uniform_logits = self.classifier(self.dropout(uniform))    # [1, C]
+        return image_logits, patch_logits, attn, uniform_logits
+
 
 class PatchClassifier(nn.Module):
     """Stage-1 patch classifier: shared ConvNeXt extractor + linear head.

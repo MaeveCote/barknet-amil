@@ -21,14 +21,35 @@ MODEL_SIZE="${MODEL_SIZE:-pico}"
 # all three runs so the 288/384 patches get downscaled to 224.
 INPUT_SIZE="${INPUT_SIZE:-$PATCH_SIZE}"
 EPOCHS_S1="${EPOCHS_S1:-20}"
-EPOCHS_S2="${EPOCHS_S2:-15}"
+# SINGLE_STAGE=1 -- the single-stage regime (H3 ablation and the paper's final model):
+# no Stage 1 at all; the AMIL model is trained from ImageNet init straight at the image
+# level, then tested. This reproduces what the paper's single-stage runs actually ran:
+#   * 40 epochs (default below), train.warmup_ratio=0.16, Stage-2 early stopping off
+#   * the config's train.optimizer.* rates UNCHANGED (base_lr 1.03e-5, x15 on the heads).
+#     The original job scripts also passed --set train.base_lr / train.lr_multiplier, but
+#     train_model.py only reads train.optimizer.*, so those overrides never took effect.
+#     To try a genuinely uniform from-ImageNet LR instead, pass via EXTRA_ARGS:
+#       --set train.optimizer.lr_multiplier=1 --set train.optimizer.base_lr=1.0062785194709649e-4
+#     (that is a NEW condition, not a reproduction of the paper).
+#   * test with --mode amil: there is no Stage-1 backbone, so no standalone `vote`
+#     predictor -- `amil_vote` (vote over the model's own patch head) is still reported.
+SINGLE_STAGE="${SINGLE_STAGE:-0}"
+if [ "$SINGLE_STAGE" = "1" ]; then
+  EPOCHS_S2="${EPOCHS_S2:-40}"
+else
+  EPOCHS_S2="${EPOCHS_S2:-15}"
+fi
 FOLD="${FOLD:-0}"
 RUN_NAME="${RUN_NAME:-${MODEL_SIZE}_${PATCH_SIZE}}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 # all | 1 | 2   -- "1" is Stage 1 only; "2" is Stage 2 + test, resuming the backbone that
 # a previous "1" job left on $SCRATCH. Lets a long Stage 1 sit in the 24h partition while
 # Stage 2 + test go in a short one, chained with --dependency=afterok.
+# With SINGLE_STAGE=1, "all" and "2" both mean "train + test" and "1" is an error.
 STAGES="${STAGES:-all}"
+if [ "$SINGLE_STAGE" = "1" ] && [ "$STAGES" = "1" ]; then
+  echo "SINGLE_STAGE=1 has no Stage 1 to run -- use STAGES=all (or 2)."; exit 1
+fi
 
 OUT="${OUT_ROOT:-$SCRATCH/runs}/$RUN_NAME"
 mkdir -p "$OUT"
@@ -38,6 +59,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export MODEL_SIZE
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
+
+# git commit, config, seed and every knob for this job -> $OUT/provenance.txt
+# shellcheck source=provenance.sh
+source "$SCRIPT_DIR/provenance.sh"
+write_provenance "$OUT" "run_chain stages=$STAGES single_stage=$SINGLE_STAGE"
 
 SRC_DIR="${SRC_DIR:-$REPO_DIR/src}"
 [ -f "$SRC_DIR/pretrain_backbone.py" ] || { echo "No pretrain_backbone.py under $SRC_DIR"; exit 1; }
@@ -63,16 +89,32 @@ COMMON=(-c "$CONFIG"
 echo
 echo "##############################################################"
 echo "# RUN $RUN_NAME | convnextv2_$MODEL_SIZE | patch $PATCH_SIZE -> input $INPUT_SIZE"
-echo "# epochs: stage1=$EPOCHS_S1  stage2=$EPOCHS_S2  fold=$FOLD"
+if [ "$SINGLE_STAGE" = "1" ]; then
+  echo "# regime: SINGLE-STAGE (no Stage 1)  epochs=$EPOCHS_S2  fold=$FOLD"
+else
+  echo "# epochs: stage1=$EPOCHS_S1  stage2=$EPOCHS_S2  fold=$FOLD"
+fi
 echo "# out   : $OUT"
 echo "##############################################################"
 
 BACKBONE="$OUT/pretrain/best_backbone.pth"
 MODEL="$OUT/train/best_model.pth"
 
+# Stage-2 / test arguments that differ between the two regimes. EXTRA_ARGS is appended
+# after these, so anything passed there still wins.
+if [ "$SINGLE_STAGE" = "1" ]; then
+  S2_ARGS=(--set model.backbone_checkpoint=null
+           --set train.warmup_ratio=0.16
+           --set train.early_stopping_patience=999)
+  TEST_ARGS=(--set model.backbone_checkpoint=null --mode amil)
+else
+  S2_ARGS=(--backbone-checkpoint "$BACKBONE")
+  TEST_ARGS=(--backbone-checkpoint "$BACKBONE" --mode both)
+fi
+
 # ---- Stage 1: patch-level backbone pretraining ------------------------------
-if [ "$STAGES" = "all" ] || [ "$STAGES" = "1" ]; then
-  echo; echo "[$(date +%T)] ===== STAGE 1 ($EPOCHS_S1 epochs, early stopping) ====="
+if [ "$SINGLE_STAGE" != "1" ] && { [ "$STAGES" = "all" ] || [ "$STAGES" = "1" ]; }; then
+  echo; echo "[$(date +%T)] ===== STAGE 1 ($EPOCHS_S1 epochs) ====="
   $PY pretrain_backbone.py "${COMMON[@]}" \
       --output-dir "$OUT/pretrain" \
       --epochs "$EPOCHS_S1" \
@@ -83,23 +125,25 @@ fi
 
 # ---- Stage 2: image-level AMIL fine-tuning ----------------------------------
 if [ "$STAGES" = "all" ] || [ "$STAGES" = "2" ]; then
-  [ -f "$BACKBONE" ] || { echo "No Stage-1 backbone at $BACKBONE -- run STAGES=1 first."; exit 1; }
+  if [ "$SINGLE_STAGE" != "1" ]; then
+    [ -f "$BACKBONE" ] || { echo "No Stage-1 backbone at $BACKBONE -- run STAGES=1 first."; exit 1; }
+  fi
 
   echo; echo "[$(date +%T)] ===== STAGE 2 ====="
   $PY train_model.py "${COMMON[@]}" \
       --output-dir "$OUT/train" \
-      --backbone-checkpoint "$BACKBONE" \
+      "${S2_ARGS[@]}" \
       --epochs "$EPOCHS_S2" \
       $EXTRA_ARGS
   [ -f "$MODEL" ] || { echo "Stage 2 produced no model at $MODEL"; exit 1; }
 
-  # ---- Test: 3 predictors x {full, capped} bags ------------------------------
+  # ---- Test: amil / amil_vote (/ vote) x {full, capped} bags -----------------
   echo; echo "[$(date +%T)] ===== TEST ====="
   $PY test_model.py "${COMMON[@]}" \
       --output-dir "$OUT/test" \
       --checkpoint "$MODEL" \
-      --backbone-checkpoint "$BACKBONE" \
-      --mode both --bags both \
+      "${TEST_ARGS[@]}" \
+      --bags both \
       $EXTRA_ARGS
   cat "$OUT/test/test_summary.json" || true
 fi
