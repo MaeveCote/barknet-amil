@@ -77,12 +77,26 @@ echo "   oldest last-access among present checkpoints: ${oldest:-n/a} days (purg
 if [ -n "${oldest:-}" ] && [ "$oldest" -ge 45 ]; then
   echo "   !! within ~2 weeks of the purge window -- back them up to /project now (see README)."
 fi
+PURGE_LIST=""
 for td in "/scratch/to_delete/$USER" "$SCRATCH/../to_delete/$USER"; do
-  if [ -e "$td" ]; then
-    echo "   purge candidate list found: $td"
-    grep -c "$TREE_RUNS" "$td" 2>/dev/null | sed 's/^/     run files listed for deletion: /' || true
-  fi
+  [ -e "$td" ] && { PURGE_LIST=$(readlink -f "$td"); break; }
 done
+N_NEEDED_LISTED=0
+if [ -n "$PURGE_LIST" ]; then
+  echo "   purge candidate list found: $PURGE_LIST"
+  echo "     files under the runs folder listed for deletion: $(grep -c "$(readlink -f "$TREE_RUNS")" "$PURGE_LIST" 2>/dev/null || echo 0)"
+  # which of the checkpoints v2 needs are on it?
+  while IFS=, read -r g r f ok _; do
+    [ "$ok" = 1 ] || continue
+    if grep -qF "$(readlink -f "$TREE_RUNS/$r/$f")" "$PURGE_LIST" 2>/dev/null; then
+      N_NEEDED_LISTED=$(( N_NEEDED_LISTED + 1 ))
+    fi
+  done < <(tail -n +2 "$INV")
+  echo "     of the $(awk -F, 'NR>1 && $4==1' "$INV" | wc -l) checkpoint/summary files v2 needs, on the list: $N_NEEDED_LISTED"
+  if [ "$N_NEEDED_LISTED" -gt 0 ]; then
+    echo "   !! BACK UP $TREE_RUNS TO /project BEFORE SUBMITTING (cluster/v2/README.md, step 0)."
+  fi
+fi
 
 echo
 echo "== Saved per-patch logit files under $TREE_RUNS"

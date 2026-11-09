@@ -25,6 +25,37 @@ from typing import Dict, Iterable, List, Set, Tuple
 
 FOLD_COLUMNS = ["image_id", "tree_id", "species", "fold", "src_image"]
 
+# Same set as helper.data_loader.IMAGE_EXTENSIONS (which imports it from here). This module
+# deliberately needs only the standard library (+ scikit-learn for the folds), so the fold
+# file can be built on a login node without OpenCV / torch.
+IMAGE_EXTENSIONS = {".png", ".bmp", ".jpg", ".jpeg", ".tif", ".tiff"}
+
+
+def list_species_files(cls_dir: Path) -> List[Path]:
+    """Image files of one species folder, in the order helper.data_loader._scan walks them."""
+    return [p for p in sorted(cls_dir.rglob("*")) if p.suffix.lower() in IMAGE_EXTENSIONS]
+
+
+def scan_raw(root, species: List[str]) -> List[Dict]:
+    """One record per raw photo of the given species: image_id, tree_id, species, src_image.
+    Identical ids to helper.data_loader._scan with ``data.filename.layout=raw``."""
+    root = Path(root)
+    if not root.exists():
+        raise FileNotFoundError(f"raw image root does not exist: {root}")
+    records = []
+    for sp in species:
+        cls_dir = root / sp
+        if not cls_dir.exists():
+            print(f"Warning: missing class directory {cls_dir}")
+            continue
+        files = [p for p in list_species_files(cls_dir) if is_raw_name(p)]
+        uids = assign_raw_uids(files)
+        for p in files:
+            tree = p.stem.split("_")[0]
+            records.append({"image_id": image_id(sp, tree, uids[p]), "tree_id": tree,
+                            "species": sp, "src_image": p.name})
+    return records
+
 
 def image_id(species: str, tree: str, uid) -> str:
     return f"{species}:{tree}:{uid}"

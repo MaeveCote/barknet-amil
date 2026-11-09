@@ -25,8 +25,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import yaml  # noqa: E402
 
+# Standard library + PyYAML + scikit-learn only: no OpenCV / torch, so this runs on a login
+# node. The ids are the ones helper.data_loader assigns (both go through image_folds).
 from helper import image_folds  # noqa: E402
-from helper.data_loader import _scan  # noqa: E402
 
 
 def main():
@@ -52,16 +53,10 @@ def main():
     if fold_path.exists() and not args.force:
         sys.exit(f"{fold_path} already exists -- refusing to overwrite (pass --force to rebuild).")
 
-    fcfg = {**cfg["data"].get("filename", {}), "layout": "raw"}
-    trees, _ = _scan(args.raw_root, species, fcfg)
-    images = []
-    for tree_imgs in trees.values():
-        for key, bag in tree_imgs.items():
-            label, tree, uid = key.split(":")
-            assert len(bag) == 1, f"raw layout should give one file per image, got {key}"
-            sp = species[int(label)]
-            images.append({"image_id": image_folds.image_id(sp, tree, uid), "tree_id": tree,
-                           "species": sp, "src_image": bag[0][0].name})
+    print(f"Scanning raw photos under {args.raw_root} ...")
+    images = image_folds.scan_raw(args.raw_root, species)
+    if len({r["image_id"] for r in images}) != len(images):
+        sys.exit("duplicate image ids -- unexpected raw file naming")
     n_trees = len({(r["species"], r["tree_id"]) for r in images})
     print(f"{len(images)} images, {n_trees} trees, {len({r['species'] for r in images})} species")
     if args.expect_images is not None and len(images) != args.expect_images:

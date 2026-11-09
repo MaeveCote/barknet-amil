@@ -52,7 +52,7 @@ from helper import image_folds
 # makes decoding slower, not faster.
 cv2.setNumThreads(0)
 
-IMAGE_EXTENSIONS = {".png", ".bmp", ".jpg", ".jpeg", ".tif", ".tiff"}
+IMAGE_EXTENSIONS = image_folds.IMAGE_EXTENSIONS   # {.png .bmp .jpg .jpeg .tif .tiff}
 
 # A bag is a list of (patch_path, label) tuples for a single image.
 Bag = List[Tuple[Path, int]]
@@ -178,7 +178,7 @@ def _scan(patch_root: str, species: List[str], fcfg: Dict):
             print(f"Warning: missing class directory {cls_dir}")
             continue
         label = class_to_idx[name]
-        files = [p for p in sorted(cls_dir.rglob("*")) if p.suffix.lower() in IMAGE_EXTENSIONS]
+        files = image_folds.list_species_files(cls_dir)
         raw_uid = None
         if layout == "raw":
             files = [p for p in files if image_folds.is_raw_name(p)]
