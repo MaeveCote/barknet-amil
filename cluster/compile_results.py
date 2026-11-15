@@ -42,8 +42,8 @@ RUN_RE = re.compile(r"^abl_(?:p(?P<patch>\d+)|msize)_(?P<model>[a-z]+)(?:_(?P<ms
 BAG_RE = re.compile(r"^bag(?P<cap>\d+)_f(?P<fold>\d+)$")
 # single-stage ablation:  abl_1stage_nano_224_f0
 ONESTAGE_RE = re.compile(r"^abl_1stage_(?P<model>[a-z]+)_(?P<patch>\d+)_f(?P<fold>\d+)$")
-# final "best model": final_nano_p512_1stage_f0
-FINAL_RE = re.compile(r"^final_(?P<model>[a-z]+)_p(?P<patch>\d+)_(?P<train>\w+?)_f(?P<fold>\d+)$")
+# final "best model": final_nano_p512_1stage_f0 (also final2_..., a re-run at another size)
+FINAL_RE = re.compile(r"^final\d*_(?P<model>[a-z]+)_p(?P<patch>\d+)_(?P<train>\w+?)_f(?P<fold>\d+)$")
 
 PREDICTORS = ["amil", "amil_vote", "vote"]
 
@@ -146,7 +146,9 @@ def tree_level(df: pd.DataFrame) -> dict:
         return out                      # identifier isn't "tree:image"; can't group
 
     work = df.copy()
-    work["tree_id"] = ids.str.split(":").str[0]
+    # Key by species AND tree: raw tree ids are not unique across species in BarkNet
+    # (e.g. tree 882 exists for both MEL and ORA).
+    work["tree_id"] = work["true_class"].astype(str) + ":" + ids.str.split(":").str[0]
 
     def vote(series: pd.Series) -> str:
         counts = series.value_counts()
@@ -240,13 +242,22 @@ def fold_metrics(xlsx: Path, sheet: str = "Pred_full") -> dict | None:
             res[f"{a}_vs_{b}_a_only"] = mc["a_only_correct"]
             res[f"{a}_vs_{b}_b_only"] = mc["b_only_correct"]
 
+    # Per-patch TEST accuracy (pooled over every test patch). Only present for runs
+    # evaluated with the current test_model.py, which records per-bag patch_correct counts.
+    for head in ("vote", "amil"):
+        col = f"{head}_patch_correct"
+        if col in df.columns and "n_patches" in df.columns:
+            res[f"{head}_patch_test_accuracy"] = float(df[col].sum() / max(df["n_patches"].sum(), 1))
+
     res.update(attention_stats(df))
     res.update(tree_level(df))
     return res
 
 
 def stage1_val_acc(run_dir: Path) -> dict:
-    """Patch-level (Stage-1) accuracy -- the instance-quality column for H1."""
+    """Stage-1 per-patch accuracy on the VALIDATION trees, at the best epoch (the epoch
+    selected on this same number, so mildly optimistic). Kept for continuity; the per-patch
+    TEST accuracy (vote_patch_test_accuracy, from fold_metrics) is the one to report."""
     p = run_dir / "pretrain" / "pretrain_summary.json"
     if not p.exists():
         return {}
@@ -360,7 +371,8 @@ def main():
     print(f"Wrote {master_path}      ({len(master)} arms)\n")
 
     cols = [("axis_value", "arm"), ("n_folds", "folds"),
-            ("stage1_val_acc_mean", "patch acc"),
+            ("vote_patch_test_accuracy_mean", "patch test"),
+            ("stage1_val_acc_mean", "patch val"),
             ("amil_accuracy_mean", "AMIL"), ("amil_vote_accuracy_mean", "amil_vote"),
             ("vote_accuracy_mean", "vote"),
             ("amil_vs_amil_vote_delta_pp_mean", "AMIL-vote pp"),

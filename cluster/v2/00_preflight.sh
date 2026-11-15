@@ -164,8 +164,8 @@ if [ "$MODE" = full ]; then
 else
   echo "   Some B1/B2 checkpoints are gone -> MODE=minimal: 15 training jobs + RETRAIN tree-level"
   echo "   nano 512 two-stage and nano 224 single-stage (5 folds each); Part B runs on those."
-  echo "   (If you still have them locally -- models_bundle.tar holds the 25 Stage-2 models, but"
-  echo "   only the 224 px Stage-1 backbones -- you can restore and re-run this preflight.)"
+  echo "   (If you have a backup of the missing checkpoints, restore them under \$TREE_RUNS --"
+  echo "   or point TREE_RUNS at the backup -- and re-run this preflight.)"
 fi
 [ "$DATA_OK" = 1 ] || echo "   !! data missing -- fix before submitting."
 [ "$FOLDS_OK" = 1 ] || echo "   !! no fold file -- fix before submitting."

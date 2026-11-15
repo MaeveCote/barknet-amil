@@ -17,8 +17,9 @@ export RAW_TAR="${RAW_TAR:-$DATA_DIR/barknet_raw.tar}"     # same photos, staged
 export FOLD_FILE="${FOLD_FILE:-$V2_ROOT/folds/image_folds.csv}"
 export EXPECT_IMAGES="${EXPECT_IMAGES:-23271}"             # BarkNet 1.0, 20 species
 
-export ACCOUNT_GPU="${ACCOUNT_GPU:-def-oberman_gpu}"
-export ACCOUNT_CPU="${ACCOUNT_CPU:-def-oberman_cpu}"
+# Your SLURM allocation, e.g. ACCOUNT_GPU=def-someone_gpu (submit_v2.sh refuses the placeholder).
+export ACCOUNT_GPU="${ACCOUNT_GPU:-YOUR_ACCOUNT_gpu}"
+export ACCOUNT_CPU="${ACCOUNT_CPU:-YOUR_ACCOUNT_cpu}"
 
 # The tree-level checkpoints Part B re-scores (inference only).
 B1_PATCH_SIZES=(160 224 288 384 512)                     # abl_p<N>_nano_f<k>   two-stage

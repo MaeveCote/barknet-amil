@@ -20,4 +20,4 @@ python "$HERE/compile_v2.py" --v2-root "$V2_ROOT" --tree-runs "$TREE_RUNS" \
     --fold-file "$FOLD_FILE" --out-dir "$V2_ROOT/tables"
 echo
 echo "Pull to your PC:"
-echo "  scp -r $USER@rorqual.alliancecan.ca:$V2_ROOT/tables ."
+echo "  scp -r $USER@<cluster-login-node>:$V2_ROOT/tables ."

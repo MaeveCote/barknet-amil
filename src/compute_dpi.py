@@ -6,7 +6,7 @@ RUNS LOCALLY on the raw BarkNet folder -- no cluster, no GPU. It reads only each
 HEADER (PIL gives .size without decoding pixels), so ~23k images take seconds even off a
 spinning disk. Point it at the folder that holds the per-species subfolders.
 
-    python compute_dpi.py G:\\data\\barknet_raw --csv image_dpi.csv
+    python compute_dpi.py path/to/barknet_raw --csv image_dpi.csv
 
 FILENAME FORMAT
     <tree_id>_<class>_<circumference_cm>_<device>_<yyyymmdd>_<hhmmss>_<crop>.jpg

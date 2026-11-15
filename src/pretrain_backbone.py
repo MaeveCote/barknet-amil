@@ -12,7 +12,7 @@ must use the same one.
 
 Usage:
     python pretrain_backbone.py -c configs/config.yaml
-    python pretrain_backbone.py -c configs/config_cluster.yaml \
+    python pretrain_backbone.py -c configs/config.yaml \
         --patch-root $SLURM_TMPDIR/patches_224/train \
         --output-dir $SCRATCH/runs/smoke/pretrain --epochs 2
 """

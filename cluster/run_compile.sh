@@ -40,5 +40,5 @@ rm -rf "$VENV"
 
 echo
 echo "[$(date +%T)] done. Pull the results to your PC with:"
-echo "  scp $USER@rorqual.alliancecan.ca:$OUT_DIR/'*.csv' ."
-echo "  scp $USER@rorqual.alliancecan.ca:$OUT_DIR/master_summary.json ."
+echo "  scp $USER@<cluster-login-node>:$OUT_DIR/'*.csv' ."
+echo "  scp $USER@<cluster-login-node>:$OUT_DIR/master_summary.json ."

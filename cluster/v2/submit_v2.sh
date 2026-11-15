@@ -22,6 +22,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/v2_env.sh"
 
 GO="${GO:-0}"
+case "$ACCOUNT_GPU$ACCOUNT_CPU" in
+  *YOUR_ACCOUNT*) echo "Set your SLURM allocation first, e.g.:"
+                  echo "  export ACCOUNT_GPU=def-someone_gpu ACCOUNT_CPU=def-someone_cpu"; exit 1 ;;
+esac
 STATUS="$V2_ROOT/preflight/status.env"
 [ -f "$STATUS" ] || { echo "No $STATUS -- run: bash cluster/v2/00_preflight.sh"; exit 1; }
 # shellcheck disable=SC1090

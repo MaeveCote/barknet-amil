@@ -83,7 +83,8 @@ foreach ($fold in $Folds) {
     # pretrain_backbone.py = per-image classifier (no attention, no bag).
     # --patch-root points at the WHOLE-IMAGE folder; the loader treats each image as one
     # labelled instance. Tree-level split via tree_id_index=0 (original BarkNet naming).
-    # data.split.n_folds=5 is mandatory (config ships n_folds=null -> would be holdout).
+    # Rotation 15 deg: the paper's whole-image baseline was trained with it (the patch
+    # models use the config's 30 deg); keep it to reproduce the reported 91.9%.
     # NOTE: the training call is NOT piped. tqdm redraws its bar with a carriage return,
     # which only works writing straight to the console. Piping it (2>&1 | Tee-Object) breaks
     # the in-place redraw and stacks a new line per update. So we let it print directly and
@@ -106,7 +107,7 @@ foreach ($fold in $Folds) {
         --set "pretrain.checkpoint_metric=val_acc" `
         --set "pretrain.early_stopping_patience=999" `
         --set "pretrain.min_epochs=999" `
-        --set "data.file.image_id_index=5"
+        --set "augmentation.rotation.degrees=15"
 
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  FAILED (exit $LASTEXITCODE)" -ForegroundColor Red

@@ -33,7 +33,7 @@ bags are much larger (median ~144, max 336 at 224px). Two evaluations are run:
                             and drifts toward plain mean pooling.
 
 Usage:
-    python test_model.py -c config/config_cluster.yaml \
+    python test_model.py -c configs/config.yaml \
         --checkpoint $SCRATCH/runs/x/train/best_model.pth \
         --backbone-checkpoint $SCRATCH/runs/x/pretrain/best_backbone.pth \
         --output-dir $SCRATCH/runs/x/test

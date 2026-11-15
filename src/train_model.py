@@ -5,7 +5,7 @@ fresh) and fine-tunes end-to-end with the auxiliary instance loss and differenti
 
 Usage:
     python train_model.py -c configs/config.yaml
-    python train_model.py -c configs/config_cluster.yaml \
+    python train_model.py -c configs/config.yaml \
         --patch-root $SLURM_TMPDIR/patches_224/train \
         --backbone-checkpoint $SCRATCH/runs/smoke/pretrain/best_backbone.pth \
         --output-dir $SCRATCH/runs/smoke/train --epochs 2
