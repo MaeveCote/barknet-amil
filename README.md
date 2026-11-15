@@ -1,7 +1,7 @@
 # BarkNet-AMIL
 
 Code for *"Toward an Optimal Configuration for Tree Species Classification from Bark
-Images: A Leakage-Safe Ablation Study"* (paper: arXiv link TBD).
+Images: A Leakage-Safe Ablation Study"* (paper: [arXiv link](https://arxiv.org/abs/2611.05680)).
 
 Attention-based Multiple Instance Learning (AMIL) over patches cut from bark images,
 with a ConvNeXt-V2 backbone, evaluated under a **tree-level, leakage-safe 5-fold
@@ -160,7 +160,6 @@ two splits — this is a hard runtime guarantee, not just a one-time check.
 [MIT](LICENSE).
 
 ## Citation
-
 ```
-(to be completed — arXiv / venue TBD)
+Maeve Côté. "Toward an Optimal Configuration for Tree Species Classification from Bark Images: A Leakage-Safe Ablation Study." arXiv preprint arXiv:2611.05680 (2026).
 ```
